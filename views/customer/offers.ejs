@@ -1,0 +1,38 @@
+<%- include('../partials/customer-header', { active: 'offers' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Active Offers</h1>
+  </div>
+
+  <div class="card">
+    <div id="offersList"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+async function loadOffers() {
+  try {
+    const data = await API.get('/api/offers/active');
+    if (!data.offers.length) {
+      document.getElementById('offersList').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No active offers at the moment</p>';
+      return;
+    }
+    document.getElementById('offersList').innerHTML = data.offers.map(o => `
+      <div style="padding:1rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:start">
+          <div>
+            <h3 style="margin-bottom:0.25rem">${o.name}</h3>
+            <p style="color:var(--text-light)">${o.description || ''}</p>
+            <small>Type: ${o.offer_type.replace(/_/g, ' ')} | Valid: ${formatDate(o.start_date)} - ${formatDate(o.end_date)}</small>
+          </div>
+          ${statusBadge(o.is_active ? 'ACTIVE' : 'EXPIRED')}
+        </div>
+        ${o.terms ? `<p style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-light)"><em>${o.terms}</em></p>` : ''}
+      </div>
+    `).join('');
+  } catch (err) {
+    showAlert('Failed to load offers', 'danger');
+  }
+}
+loadOffers();
+</script>
+<%- include('../partials/footer') %>

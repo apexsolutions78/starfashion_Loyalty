@@ -1,0 +1,71 @@
+<%- include('../partials/customer-header', { active: 'claims' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Upload Receipt</h1>
+    <a href="/claims" class="btn btn-outline">Back to Claims</a>
+  </div>
+
+  <div class="card" style="max-width:600px">
+    <form id="claimForm" enctype="multipart/form-data">
+      <div class="form-group">
+        <label>Receipt Image *</label>
+        <div class="upload-area">
+          <input type="file" id="receiptImage" name="receiptImage" accept="image/jpeg,image/png,application/pdf" required>
+          <div class="icon"> </div>
+          <p>Click or drag to upload receipt image</p>
+          <small>JPEG, PNG, or PDF (max 8MB)</small>
+        </div>
+        <img class="upload-preview" style="display:none" alt="Preview">
+      </div>
+
+      <div class="form-group">
+        <label for="receiptNumber">Receipt Number *</label>
+        <input type="text" id="receiptNumber" name="receiptNumber" required placeholder="DD-MM-YYYY-NN (e.g., 22-09-2026-01)">
+        <p class="hint">Enter the receipt number exactly as shown on your receipt</p>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="purchaseDate">Purchase Date *</label>
+          <input type="date" id="purchaseDate" name="purchaseDate" required>
+        </div>
+        <div class="form-group">
+          <label for="submittedAmount">Receipt Total (PKR) *</label>
+          <input type="number" id="submittedAmount" name="submittedAmount" required min="1" step="0.01" placeholder="0.00">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="submittedArticles">Article Numbers (optional)</label>
+        <input type="text" id="submittedArticles" name="submittedArticles" placeholder="Comma-separated article numbers">
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Submit for Review</button>
+    </form>
+  </div>
+</div>
+<script>
+document.getElementById('claimForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+
+  const formData = new FormData();
+  formData.append('receiptImage', document.getElementById('receiptImage').files[0]);
+  formData.append('receiptNumber', document.getElementById('receiptNumber').value);
+  formData.append('purchaseDate', document.getElementById('purchaseDate').value);
+  formData.append('submittedAmount', document.getElementById('submittedAmount').value);
+  const articles = document.getElementById('submittedArticles').value;
+  if (articles) formData.append('submittedArticles', JSON.stringify(articles.split(',').map(a => a.trim())));
+
+  try {
+    await API.upload('/api/claims', formData);
+    showAlert('Receipt submitted for review! This normally takes 24-48 hours.', 'success');
+    setTimeout(() => window.location.href = '/claims', 2000);
+  } catch (err) {
+    showAlert(err.error?.message || 'Upload failed', 'danger');
+    btn.disabled = false; btn.textContent = 'Submit for Review';
+  }
+});
+</script>
+<%- include('../partials/footer') %>

@@ -1,0 +1,55 @@
+<%- include('../partials/admin-header', { active: 'dashboard' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Admin Dashboard</h1>
+  </div>
+
+  <div class="card-stats" id="stats">
+    <div class="stat-card"><div class="stat-value" id="pending">-</div><div class="stat-label">Pending Claims</div></div>
+    <div class="stat-card"><div class="stat-value" id="approved">-</div><div class="stat-label">Approved Claims</div></div>
+    <div class="stat-card"><div class="stat-value" id="rejected">-</div><div class="stat-label">Rejected Claims</div></div>
+    <div class="stat-card"><div class="stat-value" id="customers">-</div><div class="stat-label">Total Customers</div></div>
+    <div class="stat-card"><div class="stat-value" id="pointsIssued">-</div><div class="stat-label">Points Issued</div></div>
+    <div class="stat-card"><div class="stat-value" id="pointsRedeemed">-</div><div class="stat-label">Points Redeemed</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">Pending Claims</div>
+      <div id="pendingClaims"><div class="spinner"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header">Recent Activity</div>
+      <div id="recentActivity"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+<script>
+async function loadDashboard() {
+  try {
+    const [pendingRes, claimsRes] = await Promise.all([
+      API.get('/api/review/claims?limit=5'),
+      API.get('/api/review/claims?limit=100'),
+    ]);
+
+    document.getElementById('pending').textContent = pendingRes.total;
+
+    document.getElementById('pendingClaims').innerHTML = pendingRes.claims.length ?
+      pendingRes.claims.map(c => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 0;border-bottom:1px solid var(--border)">
+          <div>
+            <strong>${c.receiptNumber}</strong><br>
+            <small style="color:var(--text-light)">${c.customerName} - ${formatDate(c.purchaseDate)}</small>
+          </div>
+          <a href="/admin/review/${c.id}" class="btn btn-sm btn-primary">Review</a>
+        </div>
+      `).join('') : '<p style="text-align:center;color:var(--text-light);padding:1rem">No pending claims</p>';
+
+    document.getElementById('recentActivity').innerHTML = '<p style="color:var(--text-light)">Activity feed coming soon</p>';
+  } catch (err) {
+    showAlert('Failed to load dashboard', 'danger');
+  }
+}
+loadDashboard();
+</script>
+<%- include('../partials/footer') %>

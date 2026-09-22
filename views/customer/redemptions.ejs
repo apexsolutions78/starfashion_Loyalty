@@ -1,0 +1,91 @@
+<%- include('../partials/customer-header', { active: 'redemptions' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Redemptions</h1>
+  </div>
+
+  <div class="card" style="max-width:500px;margin-bottom:1.5rem">
+    <div class="card-header">Create Voucher</div>
+    <p style="margin-bottom:1rem;color:var(--text-light)">Your balance: <strong id="balance">-</strong> points</p>
+    <form id="redeemForm">
+      <div class="form-group">
+        <label for="points">Points to Redeem</label>
+        <input type="number" id="points" min="100" required placeholder="Minimum 100 points">
+      </div>
+      <div id="quoteResult" style="display:none;margin-bottom:1rem;padding:1rem;background:var(--bg);border-radius:var(--radius)">
+        <p>Discount: <strong id="discountAmount">-</strong></p>
+        <p>Remaining balance: <strong id="remainingBalance">-</strong></p>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Create Voucher</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">My Vouchers</div>
+    <div id="vouchers"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+async function loadRedemptions() {
+  try {
+    const [balanceRes, vouchersRes] = await Promise.all([
+      API.get('/api/points/balance'),
+      API.get('/api/redemptions'),
+    ]);
+    document.getElementById('balance').textContent = balanceRes.balance.toLocaleString();
+
+    if (!vouchersRes.vouchers.length) {
+      document.getElementById('vouchers').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No vouchers yet</p>';
+      return;
+    }
+    document.getElementById('vouchers').innerHTML = `
+      <table class="table">
+        <thead><tr><th>Code</th><th>Points</th><th>Discount</th><th>Status</th><th>Expires</th></tr></thead>
+        <tbody>${vouchersRes.vouchers.map(v => `
+          <tr>
+            <td><strong>${v.voucherCode}</strong></td>
+            <td>${v.pointsRedeemed}</td>
+            <td>${formatCurrency(v.discountAmount)}</td>
+            <td>${statusBadge(v.status)}</td>
+            <td>${formatDateTime(v.expiresAt)}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    showAlert('Failed to load redemptions', 'danger');
+  }
+}
+
+document.getElementById('points').addEventListener('input', async (e) => {
+  const points = parseInt(e.target.value);
+  if (points >= 100) {
+    try {
+      const res = await API.post('/api/redemptions/quote', { pointsToRedeem: points });
+      document.getElementById('discountAmount').textContent = formatCurrency(res.quote.discountAmount);
+      document.getElementById('remainingBalance').textContent = res.quote.remainingBalance.toLocaleString();
+      document.getElementById('quoteResult').style.display = 'block';
+    } catch (err) {
+      document.getElementById('quoteResult').style.display = 'none';
+    }
+  } else {
+    document.getElementById('quoteResult').style.display = 'none';
+  }
+});
+
+document.getElementById('redeemForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Creating...';
+  try {
+    await API.post('/api/redemptions', { pointsToRedeem: parseInt(document.getElementById('points').value) });
+    showAlert('Voucher created! Show this code at the shop.', 'success');
+    loadRedemptions();
+  } catch (err) {
+    showAlert(err.error?.message || 'Failed to create voucher', 'danger');
+  }
+  btn.disabled = false; btn.textContent = 'Create Voucher';
+});
+
+loadRedemptions();
+</script>
+<%- include('../partials/footer') %>

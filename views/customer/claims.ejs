@@ -1,0 +1,39 @@
+<%- include('../partials/customer-header', { active: 'claims' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>My Claims</h1>
+    <a href="/claims/new" class="btn btn-primary">+ Upload Receipt</a>
+  </div>
+
+  <div class="card">
+    <div id="claimsList"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+async function loadClaims() {
+  try {
+    const data = await API.get('/api/claims');
+    if (!data.claims.length) {
+      document.getElementById('claimsList').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No claims submitted yet. Upload your first receipt!</p>';
+      return;
+    }
+    document.getElementById('claimsList').innerHTML = `
+      <table class="table">
+        <thead><tr><th>Receipt #</th><th>Date</th><th>Amount</th><th>Status</th><th>Submitted</th></tr></thead>
+        <tbody>${data.claims.map(c => `
+          <tr>
+            <td><strong>${c.receiptNumber}</strong></td>
+            <td>${formatDate(c.purchaseDate)}</td>
+            <td>${formatCurrency(c.submittedAmount)}</td>
+            <td>${statusBadge(c.status)}</td>
+            <td>${formatDate(c.createdAt)}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    showAlert('Failed to load claims', 'danger');
+  }
+}
+loadClaims();
+</script>
+<%- include('../partials/footer') %>

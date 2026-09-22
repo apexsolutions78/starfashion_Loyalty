@@ -1,0 +1,49 @@
+<%- include('../partials/customer-header', { active: 'points' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Points Balance</h1>
+  </div>
+
+  <div class="card-stats" style="margin-bottom:1.5rem">
+    <div class="stat-card" style="grid-column:span 2">
+      <div class="stat-value" id="balance" style="font-size:3rem">-</div>
+      <div class="stat-label">Available Points</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Points History</div>
+    <div id="ledger"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+async function loadPoints() {
+  try {
+    const data = await API.get('/api/points/ledger');
+    document.getElementById('balance').textContent = data.balance.toLocaleString();
+
+    if (!data.entries.length) {
+      document.getElementById('ledger').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No points history yet</p>';
+      return;
+    }
+    document.getElementById('ledger').innerHTML = `
+      <table class="table">
+        <thead><tr><th>Date</th><th>Type</th><th>Points</th><th>Reason</th></tr></thead>
+        <tbody>${data.entries.map(e => `
+          <tr>
+            <td>${formatDateTime(e.created_at)}</td>
+            <td>${e.type.replace(/_/g, ' ')}</td>
+            <td style="color:${e.points > 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600">
+              ${e.points > 0 ? '+' : ''}${e.points}
+            </td>
+            <td>${e.reason || '-'}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    showAlert('Failed to load points', 'danger');
+  }
+}
+loadPoints();
+</script>
+<%- include('../partials/footer') %>

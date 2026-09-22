@@ -1,0 +1,42 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="logo">
+      <img src="/images/logo.png" alt="Star Fashion">
+    </div>
+    <h2>Welcome Back</h2>
+    <p class="subtitle">Sign in to your loyalty account</p>
+    <div id="alert"></div>
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="email">Email Address</label>
+        <input type="email" id="email" name="email" required placeholder="you@example.com">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required placeholder="Enter your password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+    </form>
+    <div class="links">
+      <p><a href="/forgot-password">Forgot password?</a></p>
+      <p>Don't have an account? <a href="/register">Create one</a></p>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  try {
+    const data = await API.post('/api/auth/login', {
+      email: document.getElementById('email').value,
+      password: document.getElementById('password').value,
+    });
+    window.location.href = data.user.role === 'customer' ? '/dashboard' : '/admin';
+  } catch (err) {
+    showAlert(err.error?.message || 'Login failed', 'danger');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+</script>

@@ -1,0 +1,134 @@
+<%- include('../partials/admin-header', { active: 'review' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Review Claim</h1>
+    <a href="/admin/review" class="btn btn-outline">Back to Queue</a>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">Receipt Image</div>
+      <img id="receiptImage" style="width:100%;border-radius:var(--radius)" alt="Receipt">
+    </div>
+    <div>
+      <div class="card">
+        <div class="card-header">Submitted Details</div>
+        <p><strong>Receipt #:</strong> <span id="receiptNumber"></span></p>
+        <p><strong>Purchase Date:</strong> <span id="purchaseDate"></span></p>
+        <p><strong>Submitted Amount:</strong> <span id="submittedAmount"></span></p>
+        <p><strong>Articles:</strong> <span id="articles"></span></p>
+        <p><strong>Submitted:</strong> <span id="createdAt"></span></p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Customer Info</div>
+        <p><strong>Name:</strong> <span id="customerName"></span></p>
+        <p><strong>Email:</strong> <span id="customerEmail"></span></p>
+        <p><strong>Mobile:</strong> <span id="customerMobile"></span></p>
+        <div id="customerHistory" style="margin-top:0.5rem"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Decision</div>
+        <form id="decisionForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="approvedAmount">Approved Amount (PKR)</label>
+              <input type="number" id="approvedAmount" step="0.01" required>
+            </div>
+            <div class="form-group">
+              <label for="eligibleAmount">Eligible Amount (PKR)</label>
+              <input type="number" id="eligibleAmount" step="0.01" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="reviewerNotes">Notes</label>
+            <textarea id="reviewerNotes" rows="2" placeholder="Optional notes"></textarea>
+          </div>
+          <div class="form-group" id="rejectReasonGroup" style="display:none">
+            <label for="rejectionReason">Rejection Reason *</label>
+            <textarea id="rejectionReason" rows="2" placeholder="Required for rejection"></textarea>
+          </div>
+          <div style="display:flex;gap:1rem">
+            <button type="submit" name="action" value="approve" class="btn btn-success" style="flex:1">Approve</button>
+            <button type="submit" name="action" value="reject" class="btn btn-danger" style="flex:1">Reject</button>
+            <button type="button" onclick="requestImage()" class="btn btn-outline" style="flex:1">Request Clearer Image</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const claimId = '<%= claimId %>';
+
+async function loadClaim() {
+  try {
+    const data = await API.get(`/api/review/claims/${claimId}`);
+    const c = data.claim;
+    document.getElementById('receiptImage').src = `/api/review/claims/${claimId}/image`;
+    document.getElementById('receiptNumber').textContent = c.receiptNumber;
+    document.getElementById('purchaseDate').textContent = formatDate(c.purchaseDate);
+    document.getElementById('submittedAmount').textContent = formatCurrency(c.submittedAmount);
+    document.getElementById('articles').textContent = c.submittedArticles || '-';
+    document.getElementById('createdAt').textContent = formatDateTime(c.createdAt);
+    document.getElementById('customerName').textContent = c.customerName;
+    document.getElementById('customerEmail').textContent = c.customerEmail;
+    document.getElementById('customerMobile').textContent = c.customerMobile;
+    document.getElementById('approvedAmount').value = c.submittedAmount;
+    document.getElementById('eligibleAmount').value = c.submittedAmount;
+
+    if (data.customerHistory) {
+      const h = data.customerHistory;
+      document.getElementById('customerHistory').innerHTML = `
+        <small style="color:var(--text-light)">
+          Claims: ${h.totalClaims} total, ${h.approvedClaims} approved, ${h.rejectedClaims} rejected, ${h.pendingClaims} pending
+        </small>`;
+    }
+  } catch (err) {
+    showAlert('Failed to load claim', 'danger');
+  }
+}
+
+document.getElementById('decisionForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const action = e.submitter.value;
+  const btn = e.submitter;
+  btn.disabled = true;
+
+  try {
+    if (action === 'approve') {
+      await API.post(`/api/review/claims/${claimId}/approve`, {
+        approvedAmount: parseFloat(document.getElementById('approvedAmount').value),
+        eligibleAmount: parseFloat(document.getElementById('eligibleAmount').value),
+        reviewerNotes: document.getElementById('reviewerNotes').value || undefined,
+      });
+      showAlert('Claim approved!', 'success');
+    } else {
+      const reason = document.getElementById('rejectionReason').value;
+      if (!reason) { showAlert('Rejection reason is required', 'danger'); btn.disabled = false; return; }
+      await API.post(`/api/review/claims/${claimId}/reject`, { rejectionReason: reason });
+      showAlert('Claim rejected', 'success');
+    }
+    setTimeout(() => window.location.href = '/admin/review', 1500);
+  } catch (err) {
+    showAlert(err.error?.message || 'Action failed', 'danger');
+    btn.disabled = false;
+  }
+});
+
+async function requestImage() {
+  const notes = prompt('Enter notes for the customer:');
+  if (!notes) return;
+  try {
+    await API.post(`/api/review/claims/${claimId}/request-image`, { notes });
+    showAlert('Clearer image requested', 'success');
+    setTimeout(() => window.location.href = '/admin/review', 1500);
+  } catch (err) {
+    showAlert(err.error?.message || 'Failed', 'danger');
+  }
+}
+
+loadClaim();
+</script>
+<%- include('../partials/footer') %>

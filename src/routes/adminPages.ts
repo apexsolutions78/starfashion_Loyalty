@@ -1,0 +1,41 @@
+import { Router, Request, Response } from 'express';
+import { authenticate, authorizeAdmin } from '../middleware/auth';
+
+const router = Router();
+
+router.use(authenticate);
+router.use(authorizeAdmin('reviewer', 'manager', 'master_admin'));
+
+router.get('/', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Admin Dashboard', active: 'dashboard', layout: 'layout' });
+});
+
+router.get('/review', (req: Request, res: Response) => {
+  res.render('admin/review-queue', { title: 'Review Queue', active: 'review', layout: 'layout' });
+});
+
+router.get('/review/:id', (req: Request, res: Response) => {
+  res.render('admin/review-detail', { title: 'Review Claim', active: 'review', claimId: req.params.id, layout: 'layout' });
+});
+
+router.get('/customers', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Customers', active: 'customers', layout: 'layout' });
+});
+
+router.get('/rules', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Rules', active: 'rules', layout: 'layout' });
+});
+
+router.get('/offers', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Offers', active: 'offers', layout: 'layout' });
+});
+
+router.get('/ledger', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Points Ledger', active: 'ledger', layout: 'layout' });
+});
+
+router.get('/audit', (req: Request, res: Response) => {
+  res.render('admin/dashboard', { title: 'Audit Logs', active: 'audit', layout: 'layout' });
+});
+
+export default router;

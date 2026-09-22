@@ -1,0 +1,63 @@
+<%- include('../partials/customer-header', { active: 'dashboard' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>My Dashboard</h1>
+    <a href="/claims/new" class="btn btn-primary">+ Upload Receipt</a>
+  </div>
+
+  <div class="card-stats" id="stats">
+    <div class="stat-card"><div class="stat-value" id="balance">-</div><div class="stat-label">Available Points</div></div>
+    <div class="stat-card"><div class="stat-value" id="totalClaims">-</div><div class="stat-label">Total Claims</div></div>
+    <div class="stat-card"><div class="stat-value" id="pendingClaims">-</div><div class="stat-label">Pending</div></div>
+    <div class="stat-card"><div class="stat-value" id="approvedClaims">-</div><div class="stat-label">Approved</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">Recent Claims</div>
+      <div id="recentClaims"><div class="spinner"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header">Notifications</div>
+      <div id="notifications"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+<script>
+async function loadDashboard() {
+  try {
+    const [balanceRes, claimsRes, notifRes] = await Promise.all([
+      API.get('/api/points/balance'),
+      API.get('/api/claims?limit=5'),
+      API.get('/api/claims/notifications?limit=5'),
+    ]);
+    document.getElementById('balance').textContent = balanceRes.balance;
+    document.getElementById('totalClaims').textContent = claimsRes.total;
+    document.getElementById('pendingClaims').textContent = claimsRes.claims.filter(c => c.status === 'PENDING_REVIEW').length;
+    document.getElementById('approvedClaims').textContent = claimsRes.claims.filter(c => c.status === 'APPROVED').length;
+
+    const claimsHtml = claimsRes.claims.length ? claimsRes.claims.map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border)">
+        <div>
+          <strong>${c.receiptNumber}</strong><br>
+          <small style="color:var(--text-light)">${formatDate(c.purchaseDate)} - ${formatCurrency(c.submittedAmount)}</small>
+        </div>
+        ${statusBadge(c.status)}
+      </div>
+    `).join('') : '<p style="color:var(--text-light)">No claims yet</p>';
+    document.getElementById('recentClaims').innerHTML = claimsHtml;
+
+    const notifsHtml = notifRes.notifications.length ? notifRes.notifications.map(n => `
+      <div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
+        <strong>${n.title}</strong><br>
+        <small style="color:var(--text-light)">${n.message}</small>
+      </div>
+    `).join('') : '<p style="color:var(--text-light)">No notifications</p>';
+    document.getElementById('notifications').innerHTML = notifsHtml;
+  } catch (err) {
+    showAlert('Failed to load dashboard', 'danger');
+  }
+}
+loadDashboard();
+</script>
+<%- include('../partials/footer') %>

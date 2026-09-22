@@ -1,0 +1,16 @@
+<header class="header">
+  <div class="container">
+    <a href="/" class="logo">
+      <img src="/images/logo.png" alt="Star Fashion">
+      <span>Star Fashion Loyalty</span>
+    </a>
+    <nav>
+      <a href="/dashboard" class="<%= typeof active !== 'undefined' && active === 'dashboard' ? 'active' : '' %>">Dashboard</a>
+      <a href="/claims" class="<%= typeof active !== 'undefined' && active === 'claims' ? 'active' : '' %>">My Claims</a>
+      <a href="/points" class="<%= typeof active !== 'undefined' && active === 'points' ? 'active' : '' %>">Points</a>
+      <a href="/redemptions" class="<%= typeof active !== 'undefined' && active === 'redemptions' ? 'active' : '' %>">Redemptions</a>
+      <a href="/offers" class="<%= typeof active !== 'undefined' && active === 'offers' ? 'active' : '' %>">Offers</a>
+      <button class="btn-logout">Logout</button>
+    </nav>
+  </div>
+</header>

@@ -1,0 +1,65 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="logo">
+      <img src="/images/logo.png" alt="Star Fashion">
+    </div>
+    <h2>Create Account</h2>
+    <p class="subtitle">Join the Star Fashion Loyalty Program</p>
+    <div id="alert"></div>
+    <form id="registerForm">
+      <div class="form-group">
+        <label for="fullName">Full Name</label>
+        <input type="text" id="fullName" name="fullName" required placeholder="Your full name">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="email">Email Address</label>
+          <input type="email" id="email" name="email" required placeholder="you@example.com">
+        </div>
+        <div class="form-group">
+          <label for="mobile">Mobile Number</label>
+          <input type="tel" id="mobile" name="mobile" required placeholder="+923001234567">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required minlength="8" placeholder="Min 8 chars, uppercase, lowercase, number">
+        <p class="hint">Must contain uppercase, lowercase, and a number</p>
+      </div>
+      <div class="form-group checkbox-group">
+        <input type="checkbox" id="loyaltyConsent" required>
+        <label for="loyaltyConsent">I agree to the Loyalty Program terms and conditions *</label>
+      </div>
+      <div class="form-group checkbox-group">
+        <input type="checkbox" id="marketingConsent">
+        <label for="marketingConsent">I agree to receive marketing communications</label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+    </form>
+    <div class="links">
+      <p>Already have an account? <a href="/login">Sign in</a></p>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = 'Creating account...';
+  try {
+    await API.post('/api/auth/register', {
+      fullName: document.getElementById('fullName').value,
+      email: document.getElementById('email').value,
+      mobile: document.getElementById('mobile').value,
+      password: document.getElementById('password').value,
+      loyaltyConsent: document.getElementById('loyaltyConsent').checked,
+      marketingConsent: document.getElementById('marketingConsent').checked,
+    });
+    showAlert('Account created! Please verify your email and mobile.', 'success');
+    setTimeout(() => window.location.href = '/login', 2000);
+  } catch (err) {
+    showAlert(err.error?.message || 'Registration failed', 'danger');
+    btn.disabled = false; btn.textContent = 'Create Account';
+  }
+});
+</script>

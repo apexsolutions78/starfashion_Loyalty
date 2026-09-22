@@ -1,0 +1,18 @@
+<header class="header">
+  <div class="container">
+    <a href="/admin" class="logo">
+      <img src="/images/logo.png" alt="Star Fashion">
+      <span>Admin Panel</span>
+    </a>
+    <nav>
+      <a href="/admin" class="<%= typeof active !== 'undefined' && active === 'dashboard' ? 'active' : '' %>">Dashboard</a>
+      <a href="/admin/review" class="<%= typeof active !== 'undefined' && active === 'review' ? 'active' : '' %>">Review Queue</a>
+      <a href="/admin/customers" class="<%= typeof active !== 'undefined' && active === 'customers' ? 'active' : '' %>">Customers</a>
+      <a href="/admin/rules" class="<%= typeof active !== 'undefined' && active === 'rules' ? 'active' : '' %>">Rules</a>
+      <a href="/admin/offers" class="<%= typeof active !== 'undefined' && active === 'offers' ? 'active' : '' %>">Offers</a>
+      <a href="/admin/ledger" class="<%= typeof active !== 'undefined' && active === 'ledger' ? 'active' : '' %>">Ledger</a>
+      <a href="/admin/audit" class="<%= typeof active !== 'undefined' && active === 'audit' ? 'active' : '' %>">Audit Logs</a>
+      <button class="btn-logout">Logout</button>
+    </nav>
+  </div>
+</header>
