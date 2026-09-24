@@ -39,23 +39,50 @@ async function loadDashboard() {
     const claimsHtml = claimsRes.claims.length ? claimsRes.claims.map(c => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border)">
         <div>
-          <strong>${c.receiptNumber}</strong><br>
-          <small style="color:var(--text-light)">${formatDate(c.purchaseDate)} - ${formatCurrency(c.submittedAmount)}</small>
+          <strong>${esc(c.receiptNumber)}</strong><br>
+          <small style="color:var(--text-muted)">${formatDate(c.purchaseDate)} - ${formatCurrency(c.submittedAmount)}</small>
         </div>
         ${statusBadge(c.status)}
       </div>
-    `).join('') : '<p style="color:var(--text-light)">No claims yet</p>';
+    `).join('') : '<p style="color:var(--text-muted)">No claims yet</p>';
     document.getElementById('recentClaims').innerHTML = claimsHtml;
 
     const notifsHtml = notifRes.notifications.length ? notifRes.notifications.map(n => `
-      <div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
-        <strong>${n.title}</strong><br>
-        <small style="color:var(--text-light)">${n.message}</small>
+      <div style="padding:0.5rem 0;border-bottom:1px solid var(--border)${n.read ? ';opacity:0.65' : ''}" data-notif-id="${esc(n.id)}">
+        <strong>${esc(n.title)}</strong><br>
+        <small style="color:var(--text-muted)">${esc(n.message)}</small>
+        ${n.read ? '' : ` <button type="button" class="btn btn-sm btn-outline" data-action="mark-read" data-id="${esc(n.id)}" style="margin-left:0.5rem">Mark read</button>`}
       </div>
-    `).join('') : '<p style="color:var(--text-light)">No notifications</p>';
+    `).join('') : '<p style="color:var(--text-muted)">No notifications</p>';
     document.getElementById('notifications').innerHTML = notifsHtml;
+    if (notifRes.unreadCount > 0) {
+      const markAll = document.createElement('div');
+      markAll.style.padding = '0.5rem 0';
+      markAll.innerHTML = `<button type="button" class="btn btn-sm btn-outline" id="markAllBtn">Mark all read (${notifRes.unreadCount})</button>`;
+      document.getElementById('notifications').appendChild(markAll);
+      document.getElementById('markAllBtn').addEventListener('click', async () => {
+        try {
+          await API.post('/api/claims/notifications/read-all');
+          loadDashboard();
+        } catch (e) {
+          showAlert(e.error?.message || 'Failed to mark notifications read', 'danger');
+        }
+      });
+    }
+    document.getElementById('notifications').querySelectorAll('button[data-action="mark-read"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          await API.request(`/api/claims/notifications/${btn.dataset.id}/read`, { method: 'PATCH' });
+          loadDashboard();
+        } catch (e) {
+          showAlert(e.error?.message || 'Failed to mark notification read', 'danger');
+        }
+      });
+    });
   } catch (err) {
-    showAlert('Failed to load dashboard', 'danger');
+    document.getElementById('recentClaims').innerHTML = '<p style="color:var(--text-muted)">Failed to load claims</p>';
+    document.getElementById('notifications').innerHTML = '<p style="color:var(--text-muted)">Failed to load notifications</p>';
+    showAlert(err.error?.message || 'Failed to load dashboard', 'danger');
   }
 }
 loadDashboard();

@@ -1,6 +1,11 @@
 import { db } from '../config/database';
+import type { Knex } from 'knex';
 import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
+import { newId } from '../utils/crypto';
+import { OfferService } from './OfferService';
+
+type Db = Knex | Knex.Transaction;
 
 interface PointsRule {
   id: string;
@@ -37,9 +42,9 @@ interface PointsCalculation {
 }
 
 export class PointsEngineService {
-  static async getActiveRule(): Promise<PointsRule | null> {
+  static async getActiveRule(client: Db = db): Promise<PointsRule | null> {
     const now = new Date();
-    const rule = await db('loyalty_rules')
+    const rule = await client('loyalty_rules')
       .where('is_active', true)
       .where('effective_from', '<=', now)
       .where(function () {
@@ -58,18 +63,20 @@ export class PointsEngineService {
 
   static async calculatePoints(
     eligibleAmount: number,
-    ruleId?: string,
+    options: { ruleId?: string; customerId?: string } = {},
+    client: Db = db,
   ): Promise<PointsCalculation> {
+    const ruleId = options.ruleId;
     let rule: PointsRule | null;
 
     if (ruleId) {
-      const ruleData = await db('loyalty_rules').where('id', ruleId).first();
+      const ruleData = await client('loyalty_rules').where('id', ruleId).first();
       if (!ruleData) {
         throw createAppError('Rule not found', 404, 'RULE_NOT_FOUND');
       }
       rule = { ...ruleData, rules: JSON.parse(ruleData.rules_json) };
     } else {
-      rule = await this.getActiveRule();
+      rule = await this.getActiveRule(client);
     }
 
     if (!rule) {
@@ -84,16 +91,128 @@ export class PointsEngineService {
 
     const { currencyThreshold, pointsPerThreshold, maxPointsPerClaim } = rule.rules;
 
-    const basePoints = Math.floor(eligibleAmount / currencyThreshold) * pointsPerThreshold;
-    const cappedPoints = maxPointsPerClaim > 0 ? Math.min(basePoints, maxPointsPerClaim) : basePoints;
+    const rawBase = Math.floor(eligibleAmount / currencyThreshold) * pointsPerThreshold;
+    const basePoints = maxPointsPerClaim > 0 ? Math.min(rawBase, maxPointsPerClaim) : rawBase;
+
+    const { offerBonus, appliedOffers } = await this.evaluateOffers(
+      eligibleAmount,
+      basePoints,
+      maxPointsPerClaim,
+      options.customerId,
+      client,
+    );
+
+    let totalPoints = basePoints + offerBonus;
+    if (maxPointsPerClaim > 0 && totalPoints > maxPointsPerClaim) {
+      totalPoints = maxPointsPerClaim;
+    }
+    const cappedBonus = Math.max(0, totalPoints - basePoints);
 
     return {
-      basePoints: cappedPoints,
-      offerBonus: 0,
-      totalPoints: cappedPoints,
+      basePoints,
+      offerBonus: cappedBonus,
+      totalPoints,
       ruleSnapshot: rule,
-      appliedOffers: [],
+      appliedOffers,
     };
+  }
+
+  private static async evaluateOffers(
+    eligibleAmount: number,
+    basePoints: number,
+    maxPointsPerClaim: number,
+    customerId: string | undefined,
+    client: Db,
+  ): Promise<{ offerBonus: number; appliedOffers: any[] }> {
+    if (!customerId || basePoints <= 0) {
+      return { offerBonus: 0, appliedOffers: [] };
+    }
+
+    const activeOffers = await OfferService.getActiveOffers(client);
+    if (activeOffers.length === 0) {
+      return { offerBonus: 0, appliedOffers: [] };
+    }
+
+    const chosen: any[] = [];
+    for (const offer of activeOffers) {
+      if (chosen.some((c) => !c.stackable)) break;
+      if (!offer.stackable && chosen.length > 0) break;
+
+      const conditions = (offer.conditions || {}) as Record<string, unknown>;
+      const minPurchase = Number(conditions.minimumPurchaseAmount ?? 0);
+      if (minPurchase > 0 && eligibleAmount < minPurchase) continue;
+
+      if (offer.globalMaxUses != null && Number(offer.currentGlobalUses) >= Number(offer.globalMaxUses)) {
+        continue;
+      }
+
+      try {
+        const usage = await OfferService.checkOfferUsage(offer.id, customerId, client);
+        if (!usage.canUse) continue;
+      } catch {
+        continue;
+      }
+
+      chosen.push(offer);
+      if (!offer.stackable) break;
+    }
+
+    if (chosen.length === 0) {
+      return { offerBonus: 0, appliedOffers: [] };
+    }
+
+    let offerBonus = 0;
+    const appliedOffers: any[] = [];
+
+    for (const offer of chosen) {
+      const conditions = (offer.conditions || {}) as Record<string, number | undefined>;
+      let bonus = 0;
+
+      switch (offer.offerType) {
+        case 'multiplier': {
+          const mult = Number(conditions.multiplier ?? 0);
+          if (mult > 1) {
+            bonus = Math.floor(basePoints * (mult - 1));
+          }
+          break;
+        }
+        case 'fixed_bonus':
+        case 'birthday':
+        case 'referral':
+        case 'coupon': {
+          bonus = Math.max(0, Math.floor(Number(conditions.bonusPoints ?? 0)));
+          break;
+        }
+        case 'percentage_bonus': {
+          const pct = Number(conditions.bonusPercentage ?? 0);
+          if (pct > 0) {
+            bonus = Math.floor((basePoints * pct) / 100);
+          }
+          break;
+        }
+        default:
+          bonus = 0;
+      }
+
+      if (bonus <= 0) continue;
+
+      if (maxPointsPerClaim > 0 && basePoints + offerBonus + bonus > maxPointsPerClaim) {
+        bonus = Math.max(0, maxPointsPerClaim - (basePoints + offerBonus));
+        if (bonus <= 0) break;
+      }
+
+      offerBonus += bonus;
+      appliedOffers.push({
+        id: offer.id,
+        name: offer.name,
+        offerType: offer.offerType,
+        bonusPoints: bonus,
+        priority: offer.priority,
+        stackable: offer.stackable,
+      });
+    }
+
+    return { offerBonus, appliedOffers };
   }
 
   static async creditPoints(
@@ -104,12 +223,13 @@ export class PointsEngineService {
     appliedOffers: any[],
     createdBy: string,
     requestId: string,
+    client: Db = db,
   ): Promise<string> {
     const log = createRequestLogger(requestId);
 
     const idempotencyKey = `claim-${claimId}`;
 
-    const existingEntry = await db('points_ledger')
+    const existingEntry = await client('points_ledger')
       .where('idempotency_key', idempotencyKey)
       .first();
 
@@ -118,7 +238,8 @@ export class PointsEngineService {
       return existingEntry.id;
     }
 
-    const [entry] = await db('points_ledger').insert({
+    const [entry] = await client('points_ledger').insert({
+      id: newId(),
       customer_id: customerId,
       claim_id: claimId,
       type: 'PURCHASE_EARN',
@@ -200,6 +321,7 @@ export class PointsEngineService {
     const idempotencyKey = `reversal-${claimId}`;
 
     await db('points_ledger').insert({
+      id: newId(),
       customer_id: originalEntry.customer_id,
       claim_id: claimId,
       type: 'CORRECTION_REVERSAL',

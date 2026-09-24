@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "lint": "eslint 'src/**/*.ts' --fix",
+    "lint": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write 'src/**/*.ts'",
     "typecheck": "tsc --noEmit",
     "test": "jest --passWithNoTests",
@@ -16,7 +16,8 @@
     "migrate": "knex migrate:latest --knexfile src/config/knexfile.ts",
     "migrate:rollback": "knex migrate:rollback --knexfile src/config/knexfile.ts",
     "migrate:make": "knex migrate:make --knexfile src/config/knexfile.ts",
-    "seed": "knex seed:run --knexfile src/config/knexfile.ts"
+    "seed": "knex seed:run --knexfile src/config/knexfile.ts",
+    "seed:admin": "node scripts/seed-admin.js"
   },
   "keywords": [
     "loyalty",
@@ -30,6 +31,7 @@
   },
   "dependencies": {
     "argon2": "^0.45.1",
+    "better-sqlite3": "^13.0.3",
     "connect-session-knex": "^5.0.0",
     "cors": "^2.8.6",
     "dotenv": "^18.0.3",
@@ -42,6 +44,7 @@
     "multer": "^2.4.0",
     "mysql2": "^3.24.4",
     "nanoid": "^6.0.1",
+    "nodemailer": "^10.0.10",
     "sharp": "^0.35.4",
     "uuid": "^14.0.2",
     "winston": "^3.19.0",
@@ -55,6 +58,7 @@
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.6.2",
+    "@types/nodemailer": "^8.0.2",
     "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.70.1",
     "@typescript-eslint/parser": "^8.70.1",

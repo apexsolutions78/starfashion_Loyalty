@@ -1,6 +1,6 @@
 import { db } from '../config/database';
 import { UserModel } from '../models/UserModel';
-import { hashPassword } from '../utils/crypto';
+import { hashPassword, newId } from '../utils/crypto';
 import { createAppError } from '../middleware/errorHandler';
 import { Role } from '../middleware/auth';
 import { createRequestLogger } from '../utils/logger';
@@ -26,7 +26,9 @@ export class AdminService {
     const passwordHash = await hashPassword(input.password);
 
     const admin = await db.transaction(async (trx) => {
-      const newUser = await UserModel.create({
+      const userId = newId();
+      await trx('users').insert({
+        id: userId,
         email: input.email.toLowerCase().trim(),
         mobile: input.mobile,
         password_hash: passwordHash,
@@ -37,12 +39,14 @@ export class AdminService {
       });
 
       await trx('admin_profiles').insert({
-        user_id: newUser.id,
+        id: newId(),
+        user_id: userId,
         full_name: input.fullName,
         department: input.department,
       });
 
-      log.info('Admin created', { adminId: newUser.id, role: input.role, createdBy });
+      const newUser = await trx('users').where('id', userId).first();
+      log.info('Admin created', { adminId: userId, role: input.role, createdBy });
       return newUser;
     });
 
@@ -57,7 +61,7 @@ export class AdminService {
 
   static async getAdmins() {
     return db('users')
-      .join('admin_profiles', 'users.id', 'admin_profiles.user_id')
+      .leftJoin('admin_profiles', 'users.id', 'admin_profiles.user_id')
       .select(
         'users.id',
         'users.email',
@@ -68,7 +72,8 @@ export class AdminService {
         'admin_profiles.department',
         'users.created_at',
       )
-      .where('users.role', '!=', 'customer');
+      .where('users.role', '!=', 'customer')
+      .orderBy('users.created_at', 'desc');
   }
 
   static async updateAdminRole(adminId: string, newRole: Role, requestId: string) {
@@ -116,21 +121,43 @@ export class AdminService {
     entityType?: string;
     entityId?: string;
     action?: string;
+    search?: string;
     limit?: number;
     offset?: number;
   }) {
-    let query = db('audit_logs').orderBy('created_at', 'desc');
+    let query = db('audit_logs')
+      .leftJoin('users', 'audit_logs.user_id', 'users.id')
+      .select(
+        'audit_logs.id',
+        'audit_logs.user_id',
+        'audit_logs.action',
+        'audit_logs.entity_type',
+        'audit_logs.entity_id',
+        'audit_logs.ip_address',
+        'audit_logs.created_at',
+        'users.email as actorEmail',
+        'users.role as actorRole',
+      );
 
-    if (filters.userId) query = query.where('user_id', filters.userId);
-    if (filters.entityType) query = query.where('entity_type', filters.entityType);
-    if (filters.entityId) query = query.where('entity_id', filters.entityId);
-    if (filters.action) query = query.where('action', filters.action);
+    if (filters.userId) query = query.where('audit_logs.user_id', filters.userId);
+    if (filters.entityType) query = query.where('audit_logs.entity_type', filters.entityType);
+    if (filters.entityId) query = query.where('audit_logs.entity_id', filters.entityId);
+    if (filters.action) query = query.where('audit_logs.action', filters.action);
+    if (filters.search) {
+      const q = `%${filters.search.toLowerCase()}%`;
+      query = query.where(function () {
+        this.whereRaw('LOWER(audit_logs.action) LIKE ?', [q])
+          .orWhereRaw('LOWER(COALESCE(users.email, ?)) LIKE ?', ['', q])
+          .orWhereRaw('LOWER(COALESCE(audit_logs.entity_type, ?)) LIKE ?', ['', q])
+          .orWhereRaw('LOWER(COALESCE(audit_logs.entity_id, ?)) LIKE ?', ['', q]);
+      });
+    }
 
     const limit = filters.limit || 50;
     const offset = filters.offset || 0;
 
-    const [countResult] = await query.clone().count('* as total');
-    const logs = await query.limit(limit).offset(offset);
+    const [countResult] = await query.clone().clearSelect().count('* as total');
+    const logs = await query.orderBy('audit_logs.created_at', 'desc').limit(limit).offset(offset);
 
     return {
       logs,
@@ -151,6 +178,7 @@ export class AdminService {
     userAgent?: string;
   }) {
     return db('audit_logs').insert({
+      id: newId(),
       user_id: data.userId,
       action: data.action,
       entity_type: data.entityType,

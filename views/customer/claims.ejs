@@ -10,28 +10,88 @@
   </div>
 </div>
 <script>
+let resubmitClaimId = null;
+
 async function loadClaims() {
+  const list = document.getElementById('claimsList');
   try {
     const data = await API.get('/api/claims');
-    if (!data.claims.length) {
-      document.getElementById('claimsList').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No claims submitted yet. Upload your first receipt!</p>';
+    const claims = Array.isArray(data?.claims) ? data.claims : [];
+    if (!claims.length) {
+      list.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">No claims submitted yet. Upload your first receipt!</p>';
       return;
     }
-    document.getElementById('claimsList').innerHTML = `
+    list.innerHTML = `
       <table class="table">
-        <thead><tr><th>Receipt #</th><th>Date</th><th>Amount</th><th>Status</th><th>Submitted</th></tr></thead>
-        <tbody>${data.claims.map(c => `
+        <thead><tr><th>Receipt #</th><th>Date</th><th>Amount</th><th>Status</th><th>Submitted</th><th>Action</th></tr></thead>
+        <tbody>${claims.map(c => `
           <tr>
-            <td><strong>${c.receiptNumber}</strong></td>
+            <td><strong>${esc(c.receiptNumber) || '-'}</strong></td>
             <td>${formatDate(c.purchaseDate)}</td>
             <td>${formatCurrency(c.submittedAmount)}</td>
             <td>${statusBadge(c.status)}</td>
             <td>${formatDate(c.createdAt)}</td>
+            <td>${c.status === 'REQUEST_CLEARER_IMAGE'
+              ? `<button type="button" class="btn btn-sm btn-primary" data-action="resubmit" data-id="${esc(c.id)}" data-amount="${Number(c.submittedAmount || 0)}">Resubmit</button>`
+              : '-'}</td>
           </tr>
         `).join('')}</tbody>
-      </table>`;
+      </table>
+      <div id="resubmitCard" class="card" style="display:none;margin-top:1rem">
+        <div class="card-header">Resubmit Receipt</div>
+        <form id="resubmitForm">
+          <div class="form-group">
+            <label for="resubmitAmount">Submitted Amount (PKR)</label>
+            <input type="number" id="resubmitAmount" required min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="resubmitFile">New Receipt Image</label>
+            <input type="file" id="resubmitFile" accept="image/jpeg,image/png,application/pdf" required>
+            <div class="hint">JPEG, PNG, or PDF up to 8MB</div>
+          </div>
+          <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+            <button type="button" class="btn btn-outline" id="cancelResubmitBtn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="resubmitSubmitBtn">Submit</button>
+          </div>
+        </form>
+      </div>`;
+
+    list.querySelectorAll('button[data-action="resubmit"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        resubmitClaimId = btn.dataset.id;
+        document.getElementById('resubmitAmount').value = btn.dataset.amount || '';
+        document.getElementById('resubmitCard').style.display = 'block';
+        document.getElementById('resubmitFile').focus();
+      });
+    });
+    document.getElementById('cancelResubmitBtn').addEventListener('click', () => {
+      document.getElementById('resubmitCard').style.display = 'none';
+      document.getElementById('resubmitForm').reset();
+      resubmitClaimId = null;
+    });
+    document.getElementById('resubmitForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!resubmitClaimId) return;
+      const submitBtn = document.getElementById('resubmitSubmitBtn');
+      submitBtn.disabled = true; submitBtn.textContent = 'Submitting...';
+      try {
+        const fd = new FormData();
+        fd.append('receiptImage', document.getElementById('resubmitFile').files[0]);
+        fd.append('submittedAmount', document.getElementById('resubmitAmount').value);
+        await API.upload(`/api/claims/${resubmitClaimId}/resubmit`, fd);
+        showAlert('Claim resubmitted for review', 'success');
+        resubmitClaimId = null;
+        await loadClaims();
+      } catch (err) {
+        showAlert(err.error?.message || 'Failed to resubmit claim', 'danger');
+      } finally {
+        submitBtn.disabled = false; submitBtn.textContent = 'Submit';
+      }
+    });
   } catch (err) {
-    showAlert('Failed to load claims', 'danger');
+    const msg = err?.error?.message || err?.message || `HTTP ${err?.status || 'error'}`;
+    list.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:2rem">Failed to load claims: ${esc(msg)}</p>`;
+    showAlert(msg, 'danger');
   }
 }
 loadClaims();

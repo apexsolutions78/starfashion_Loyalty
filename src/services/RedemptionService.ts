@@ -3,6 +3,7 @@ import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
 import { PointsEngineService } from './PointsEngineService';
 import { randomBytes } from 'crypto';
+import { newId } from '../utils/crypto';
 
 interface RedemptionQuote {
   pointsToRedeem: number;
@@ -79,12 +80,6 @@ export class RedemptionService {
   ): Promise<Voucher> {
     const log = createRequestLogger(requestId);
 
-    const balance = await PointsEngineService.getBalance(customerId);
-
-    if (pointsToRedeem > balance) {
-      throw createAppError('Insufficient points balance', 400, 'INSUFFICIENT_BALANCE');
-    }
-
     const quote = await this.getRedemptionQuote(customerId, pointsToRedeem);
 
     const voucherCode = this.generateVoucherCode();
@@ -93,7 +88,18 @@ export class RedemptionService {
     expiresAt.setHours(expiresAt.getHours() + 24);
 
     const [voucher] = await db.transaction(async (trx) => {
+      // Re-check balance inside the transaction to prevent concurrent overspend
+      const balanceRow = await trx('points_ledger')
+        .where('customer_id', customerId)
+        .select(trx.raw('COALESCE(SUM(points), 0) as balance'))
+        .first();
+      const balance = Number(balanceRow?.balance || 0);
+      if (pointsToRedeem > balance) {
+        throw createAppError('Insufficient points balance', 400, 'INSUFFICIENT_BALANCE');
+      }
+
       const [v] = await trx('redemption_vouchers').insert({
+        id: newId(),
         customer_id: customerId,
         voucher_code: voucherCode,
         points_redeemed: pointsToRedeem,
@@ -104,7 +110,8 @@ export class RedemptionService {
 
       const idempotencyKey = `redemption-${v.id}`;
 
-      await trx('points_ledger').insert({
+      const ledgerInserted = await trx('points_ledger').insert({
+        id: newId(),
         customer_id: customerId,
         voucher_id: v.id,
         type: 'REDEMPTION',
@@ -114,9 +121,26 @@ export class RedemptionService {
         reason: `Redemption voucher ${voucherCode} created`,
       });
 
+      if (!ledgerInserted) {
+        throw createAppError('Failed to record redemption', 500, 'LEDGER_INSERT_FAILED');
+      }
+
       await trx('redemption_vouchers')
         .where('id', v.id)
         .update({ ledger_entry_id: (await trx('points_ledger').where('idempotency_key', idempotencyKey).first())?.id });
+
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: customerId,
+        action: 'VOUCHER_CREATED',
+        entity_type: 'redemption_voucher',
+        entity_id: v.id,
+        new_values: JSON.stringify({
+          voucherCode,
+          pointsRedeemed: pointsToRedeem,
+          discountAmount: quote.discountAmount,
+        }),
+      });
 
       return [v];
     });
@@ -164,15 +188,21 @@ export class RedemptionService {
     }
 
     await db.transaction(async (trx) => {
-      await trx('redemption_vouchers')
+      const updated = await trx('redemption_vouchers')
         .where('id', voucher.id)
+        .where('status', 'ACTIVE')
         .update({
           status: 'USED',
           used_at: new Date(),
           used_by: usedBy,
         });
 
+      if (!updated) {
+        throw createAppError('Voucher already used or cancelled', 409, 'VOUCHER_NOT_ACTIVE');
+      }
+
       await trx('audit_logs').insert({
+        id: newId(),
         user_id: usedBy,
         action: 'VOUCHER_USED',
         entity_type: 'redemption_voucher',
@@ -210,13 +240,19 @@ export class RedemptionService {
     }
 
     await db.transaction(async (trx) => {
-      await trx('redemption_vouchers')
+      const updated = await trx('redemption_vouchers')
         .where('id', voucherId)
+        .where('status', 'ACTIVE')
         .update({ status: 'CANCELLED' });
+
+      if (!updated) {
+        throw createAppError('Voucher no longer active', 409, 'VOUCHER_NOT_ACTIVE');
+      }
 
       const idempotencyKey = `cancellation-${voucherId}`;
 
       await trx('points_ledger').insert({
+        id: newId(),
         customer_id: customerId,
         voucher_id: voucherId,
         type: 'CORRECTION_REVERSAL',
@@ -225,6 +261,16 @@ export class RedemptionService {
         created_by: customerId,
         reason: `Voucher ${voucher.voucher_code} cancelled`,
         reversal_reference: voucher.ledger_entry_id,
+      });
+
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: customerId,
+        action: 'VOUCHER_CANCELLED',
+        entity_type: 'redemption_voucher',
+        entity_id: voucherId,
+        old_values: JSON.stringify({ status: 'ACTIVE' }),
+        new_values: JSON.stringify({ status: 'CANCELLED', pointsRestored: voucher.points_redeemed }),
       });
     });
 
@@ -272,5 +318,70 @@ export class RedemptionService {
     const bytes = randomBytes(6);
     const code = bytes.toString('hex').toUpperCase();
     return `SF-${code.slice(0, 4)}-${code.slice(4, 8)}`;
+  }
+
+  /**
+   * Proactively mark ACTIVE vouchers past expires_at as EXPIRED and restore points.
+   * Lazy expiry in useVoucher remains as a race fallback.
+   */
+  static async expireDueVouchers(requestId: string): Promise<number> {
+    const log = createRequestLogger(requestId);
+    const now = new Date();
+
+    const count = await db.transaction(async (trx) => {
+      const due = await trx('redemption_vouchers')
+        .where('status', 'ACTIVE')
+        .where('expires_at', '<', now);
+
+      let expired = 0;
+      for (const voucher of due) {
+        const updated = await trx('redemption_vouchers')
+          .where('id', voucher.id)
+          .where('status', 'ACTIVE')
+          .update({ status: 'EXPIRED' });
+
+        if (!updated) continue;
+
+        const idempotencyKey = `expiry-${voucher.id}`;
+        const existing = await trx('points_ledger')
+          .where('idempotency_key', idempotencyKey)
+          .first();
+
+        if (!existing) {
+          await trx('points_ledger').insert({
+            id: newId(),
+            customer_id: voucher.customer_id,
+            voucher_id: voucher.id,
+            type: 'EXPIRY',
+            points: voucher.points_redeemed,
+            idempotency_key: idempotencyKey,
+            created_by: voucher.customer_id,
+            reason: `Voucher ${voucher.voucher_code} expired`,
+            reversal_reference: voucher.ledger_entry_id,
+          });
+        }
+
+        await trx('audit_logs').insert({
+          id: newId(),
+          user_id: voucher.customer_id,
+          action: 'VOUCHER_EXPIRED',
+          entity_type: 'redemption_voucher',
+          entity_id: voucher.id,
+          old_values: JSON.stringify({ status: 'ACTIVE' }),
+          new_values: JSON.stringify({
+            status: 'EXPIRED',
+            pointsRestored: voucher.points_redeemed,
+          }),
+        });
+
+        expired += 1;
+      }
+      return expired;
+    });
+
+    if (count > 0) {
+      log.info('Expired due vouchers', { count });
+    }
+    return count;
   }
 }

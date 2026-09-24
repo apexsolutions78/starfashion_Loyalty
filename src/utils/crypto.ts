@@ -1,5 +1,5 @@
 import argon2 from 'argon2';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, randomUUID } from 'crypto';
 
 export async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, { type: argon2.argon2id });
@@ -25,4 +25,8 @@ export function generateOTP(length: number = 6): string {
     otp += digits[bytes[i] % 10];
   }
   return otp;
+}
+
+export function newId(): string {
+  return randomUUID();
 }

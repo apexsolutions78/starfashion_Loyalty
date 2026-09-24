@@ -1,0 +1,279 @@
+<%- include('../partials/admin-header', { active: 'rules' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Loyalty Rules</h1>
+    <button type="button" class="btn btn-primary" id="showCreateBtn">New Rule Version</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="card" id="createFormCard" style="display:none;margin-bottom:1.5rem">
+    <div class="card-header">Create Rule</div>
+    <form id="createRuleForm">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="ruleName">Name</label>
+          <input type="text" id="ruleName" required maxlength="255" placeholder="Standard Earn Rules">
+        </div>
+        <div class="form-group">
+          <label for="effectiveFrom">Effective From</label>
+          <input type="date" id="effectiveFrom" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="currencyThreshold">Currency Threshold (PKR)</label>
+          <input type="number" id="currencyThreshold" required min="1" step="1" value="1000">
+        </div>
+        <div class="form-group">
+          <label for="pointsPerThreshold">Points Per Threshold</label>
+          <input type="number" id="pointsPerThreshold" required min="1" step="1" value="100">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="minimumPurchaseAmount">Minimum Purchase</label>
+          <input type="number" id="minimumPurchaseAmount" required min="0" step="0.01" value="0">
+        </div>
+        <div class="form-group">
+          <label for="maxPointsPerClaim">Max Points Per Claim</label>
+          <input type="number" id="maxPointsPerClaim" required min="0" step="1" value="10000">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="redemptionConversion">Redemption Conversion (points = 1 PKR)</label>
+          <input type="number" id="redemptionConversion" required min="0.01" step="0.01" value="10">
+        </div>
+        <div class="form-group">
+          <label for="minimumRedemptionPoints">Min Redemption Points</label>
+          <input type="number" id="minimumRedemptionPoints" required min="0" step="1" value="500">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="maxRedemptionPercentage">Max Redemption %</label>
+          <input type="number" id="maxRedemptionPercentage" required min="0" max="100" step="1" value="50">
+        </div>
+        <div class="form-group">
+          <label for="maxFixedDiscount">Max Fixed Discount (PKR)</label>
+          <input type="number" id="maxFixedDiscount" required min="0" step="0.01" value="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="claimSubmissionWindowDays">Claim Window (days)</label>
+          <input type="number" id="claimSubmissionWindowDays" required min="1" step="1" value="30">
+        </div>
+        <div class="form-group">
+          <label for="pointExpiryDays">Point Expiry Days</label>
+          <input type="number" id="pointExpiryDays" min="1" step="1" placeholder="Leave blank for never">
+          <div class="hint">Leave blank if points never expire</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="eligibleCategories">Eligible Categories</label>
+          <input type="text" id="eligibleCategories" placeholder="Apparel, Footwear (comma-separated)">
+        </div>
+        <div class="form-group">
+          <label for="excludedCategories">Excluded Categories</label>
+          <input type="text" id="excludedCategories" placeholder="Gift Cards (comma-separated)">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-group" style="display:flex;gap:0.5rem;align-items:center">
+          <input type="checkbox" id="earnOnPointsPayment">
+          Earn points on points-paid amounts
+        </label>
+      </div>
+      <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+        <button type="button" class="btn btn-outline" id="cancelCreateBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="createSubmitBtn">Create Rule</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Rule Versions</div>
+    <div id="rulesList"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+const rulesList = document.getElementById('rulesList');
+const createFormCard = document.getElementById('createFormCard');
+const emptyMsg = (msg) => `<p style="text-align:center;color:var(--text-muted);padding:1.5rem">${msg}</p>`;
+let editingRuleId = null;
+
+function activeBadge(isActive) {
+  return isActive
+    ? '<span class="badge badge-active">ACTIVE</span>'
+    : '<span class="badge badge-pending">INACTIVE</span>';
+}
+
+function setFormMode(mode, rule) {
+  editingRuleId = mode === 'edit' && rule ? rule.id : null;
+  const header = createFormCard.querySelector('.card-header');
+  const submitBtn = document.getElementById('createSubmitBtn');
+  if (mode === 'edit' && rule) {
+    header.textContent = `Edit Rule v${rule.version}`;
+    submitBtn.textContent = 'Save Changes';
+    const r = rule.rules || {};
+    document.getElementById('ruleName').value = rule.name || '';
+    document.getElementById('effectiveFrom').value = (rule.effective_from || '').slice(0, 10);
+    document.getElementById('currencyThreshold').value = r.currencyThreshold ?? 1000;
+    document.getElementById('pointsPerThreshold').value = r.pointsPerThreshold ?? 100;
+    document.getElementById('minimumPurchaseAmount').value = r.minimumPurchaseAmount ?? 0;
+    document.getElementById('maxPointsPerClaim').value = r.maxPointsPerClaim ?? 10000;
+    document.getElementById('redemptionConversion').value = r.redemptionConversion ?? 10;
+    document.getElementById('minimumRedemptionPoints').value = r.minimumRedemptionPoints ?? 500;
+    document.getElementById('maxRedemptionPercentage').value = r.maxRedemptionPercentage ?? 50;
+    document.getElementById('maxFixedDiscount').value = r.maxFixedDiscount ?? 0;
+    document.getElementById('claimSubmissionWindowDays').value = r.claimSubmissionWindowDays ?? 30;
+    document.getElementById('pointExpiryDays').value = r.pointExpiryDays ?? '';
+    document.getElementById('eligibleCategories').value = Array.isArray(r.eligibleCategories) ? r.eligibleCategories.join(', ') : '';
+    document.getElementById('excludedCategories').value = Array.isArray(r.excludedCategories) ? r.excludedCategories.join(', ') : '';
+    document.getElementById('earnOnPointsPayment').checked = !!r.earnOnPointsPayment;
+  } else {
+    header.textContent = 'Create Rule';
+    submitBtn.textContent = 'Create Rule';
+    document.getElementById('createRuleForm').reset();
+  }
+  createFormCard.style.display = 'block';
+}
+
+async function loadRules() {
+  try {
+    rulesList.innerHTML = '<div class="spinner"></div>';
+    const data = await API.get('/api/admin/rules');
+    const rules = data.rules || [];
+    if (!rules.length) {
+      rulesList.innerHTML = emptyMsg('No rules created yet');
+      return;
+    }
+    rulesList.innerHTML = `
+      <table class="table">
+        <thead><tr><th>Version</th><th>Name</th><th>Status</th><th>Effective</th><th>Key Settings</th><th>Actions</th></tr></thead>
+        <tbody>${rules.map(r => {
+          const rulesObj = r.rules || {};
+          return `
+          <tr>
+            <td><strong>v${r.version}</strong></td>
+            <td>${esc(r.name)}</td>
+            <td>${activeBadge(!!r.is_active)}</td>
+            <td>${formatDate(r.effective_from)}${r.effective_to ? `<br><small style="color:var(--text-muted)">to ${formatDate(r.effective_to)}</small>` : ''}</td>
+            <td>
+              <small style="color:var(--text-muted)">
+                1 PKR → ${rulesObj.pointsPerThreshold ?? '-'} pts<br>
+                Redeem ${rulesObj.redemptionConversion ?? '-'} pts = 1 PKR<br>
+                Max claim ${rulesObj.maxPointsPerClaim ?? '-'} pts
+              </small>
+            </td>
+            <td style="white-space:nowrap">
+              ${!r.is_active
+                ? `<button class="btn btn-sm btn-outline" data-action="edit" data-id="${esc(r.id)}">Edit</button> ` : ''}
+              ${r.is_active
+                ? `<button class="btn btn-sm btn-outline" data-action="deactivate" data-id="${esc(r.id)}">Deactivate</button>`
+                : `<button class="btn btn-sm btn-success" data-action="activate" data-id="${esc(r.id)}">Activate</button>`}
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    rulesList.innerHTML = emptyMsg('Failed to load rules');
+    showAlert(err.error?.message || 'Failed to load rules', 'danger');
+  }
+}
+
+rulesList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+
+  if (action === 'edit') {
+    try {
+      const data = await API.get(`/api/admin/rules/${id}`);
+      setFormMode('edit', data.rule);
+      document.getElementById('ruleName').focus();
+    } catch (err) {
+      showAlert(err.error?.message || 'Failed to load rule', 'danger');
+    }
+    return;
+  }
+
+  if (action === 'activate' && !confirm('Activate this rule version? It will deactivate the current active rule.')) return;
+  btn.disabled = true;
+  try {
+    await API.post(`/api/admin/rules/${id}/${action}`);
+    showAlert(action === 'activate' ? 'Rule activated' : 'Rule deactivated', 'success');
+    await loadRules();
+  } catch (err) {
+    showAlert(err.error?.message || 'Action failed', 'danger');
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('showCreateBtn').addEventListener('click', () => {
+  setFormMode('create');
+  if (!document.getElementById('effectiveFrom').value) {
+    document.getElementById('effectiveFrom').value = new Date().toISOString().slice(0, 10);
+  }
+  document.getElementById('ruleName').focus();
+});
+
+document.getElementById('cancelCreateBtn').addEventListener('click', () => {
+  createFormCard.style.display = 'none';
+  setFormMode('create');
+});
+
+function parseList(v) {
+  return v.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+document.getElementById('createRuleForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('createSubmitBtn');
+  const isEdit = !!editingRuleId;
+  const originalLabel = isEdit ? 'Save Changes' : 'Create Rule';
+  btn.disabled = true; btn.textContent = isEdit ? 'Saving...' : 'Creating...';
+  try {
+    const expiryRaw = document.getElementById('pointExpiryDays').value;
+    const payload = {
+      name: document.getElementById('ruleName').value.trim(),
+      effectiveFrom: document.getElementById('effectiveFrom').value,
+      rules: {
+        currencyThreshold: Number(document.getElementById('currencyThreshold').value),
+        pointsPerThreshold: Number(document.getElementById('pointsPerThreshold').value),
+        minimumPurchaseAmount: Number(document.getElementById('minimumPurchaseAmount').value),
+        eligibleCategories: parseList(document.getElementById('eligibleCategories').value),
+        excludedCategories: parseList(document.getElementById('excludedCategories').value),
+        maxPointsPerClaim: Number(document.getElementById('maxPointsPerClaim').value),
+        pointExpiryDays: expiryRaw === '' ? null : Number(expiryRaw),
+        redemptionConversion: Number(document.getElementById('redemptionConversion').value),
+        minimumRedemptionPoints: Number(document.getElementById('minimumRedemptionPoints').value),
+        maxRedemptionPercentage: Number(document.getElementById('maxRedemptionPercentage').value),
+        maxFixedDiscount: Number(document.getElementById('maxFixedDiscount').value),
+        earnOnPointsPayment: document.getElementById('earnOnPointsPayment').checked,
+        claimSubmissionWindowDays: Number(document.getElementById('claimSubmissionWindowDays').value),
+      },
+    };
+    if (isEdit) {
+      await API.patch(`/api/admin/rules/${editingRuleId}`, payload);
+      showAlert('Rule updated', 'success');
+    } else {
+      await API.post('/api/admin/rules', payload);
+      showAlert('Rule created', 'success');
+    }
+    setFormMode('create');
+    createFormCard.style.display = 'none';
+    await loadRules();
+  } catch (err) {
+    showAlert(err.error?.message || (isEdit ? 'Failed to update rule' : 'Failed to create rule'), 'danger');
+  } finally {
+    btn.disabled = false; btn.textContent = originalLabel;
+  }
+});
+
+loadRules();
+</script>
+<%- include('../partials/footer') %>

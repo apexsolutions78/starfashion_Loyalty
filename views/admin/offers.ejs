@@ -1,0 +1,205 @@
+<%- include('../partials/admin-header', { active: 'offers' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Offers</h1>
+    <button type="button" class="btn btn-primary" id="showCreateBtn">Create Offer</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="card" id="createFormCard" style="display:none;margin-bottom:1.5rem">
+    <div class="card-header">Create Offer</div>
+    <form id="createOfferForm">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="offerName">Name</label>
+          <input type="text" id="offerName" required maxlength="255" placeholder="Double Points Weekend">
+        </div>
+        <div class="form-group">
+          <label for="offerType">Type</label>
+          <select id="offerType" required>
+            <option value="multiplier">Multiplier</option>
+            <option value="fixed_bonus">Fixed Bonus</option>
+            <option value="percentage_bonus">Percentage Bonus</option>
+            <option value="birthday">Birthday</option>
+            <option value="referral">Referral</option>
+            <option value="coupon">Coupon</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="offerDescription">Description</label>
+        <textarea id="offerDescription" rows="2" maxlength="1000" placeholder="Optional description shown to customers"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="startDate">Start Date</label>
+          <input type="date" id="startDate" required>
+        </div>
+        <div class="form-group">
+          <label for="endDate">End Date</label>
+          <input type="date" id="endDate" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="maxUsesPerCustomer">Max Uses / Customer</label>
+          <input type="number" id="maxUsesPerCustomer" min="1" step="1" value="1">
+        </div>
+        <div class="form-group">
+          <label for="globalMaxUses">Global Max Uses</label>
+          <input type="number" id="globalMaxUses" min="1" step="1" placeholder="Unlimited if blank">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="priority">Priority</label>
+          <input type="number" id="priority" min="0" step="1" value="0">
+          <div class="hint">Higher priority offers apply first</div>
+        </div>
+        <div class="form-group">
+          <label for="minPurchase">Min Purchase (PKR)</label>
+          <input type="number" id="minPurchase" min="0" step="0.01" placeholder="Optional">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="offerTerms">Terms</label>
+        <textarea id="offerTerms" rows="2" maxlength="2000" placeholder="Optional terms and conditions"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-group" style="display:flex;gap:0.5rem;align-items:center">
+          <input type="checkbox" id="stackable">
+          Stackable with other offers
+        </label>
+      </div>
+      <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+        <button type="button" class="btn btn-outline" id="cancelCreateBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="createSubmitBtn">Create Offer</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">All Offers</div>
+    <div id="offersList"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+const offersList = document.getElementById('offersList');
+const createFormCard = document.getElementById('createFormCard');
+const emptyMsg = (msg) => `<p style="text-align:center;color:var(--text-muted);padding:1.5rem">${msg}</p>`;
+
+function activeBadge(isActive) {
+  return isActive
+    ? '<span class="badge badge-active">ACTIVE</span>'
+    : '<span class="badge badge-pending">INACTIVE</span>';
+}
+
+function typeBadge(type) {
+  return `<span class="badge badge-approved">${String(type || '').replace(/_/g, ' ').toUpperCase()}</span>`;
+}
+
+async function loadOffers() {
+  try {
+    offersList.innerHTML = '<div class="spinner"></div>';
+    const data = await API.get('/api/offers');
+    const offers = data.offers || [];
+    if (!offers.length) {
+      offersList.innerHTML = emptyMsg('No offers yet');
+      return;
+    }
+    offersList.innerHTML = `
+      <table class="table">
+        <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Dates</th><th>Usage</th><th>Actions</th></tr></thead>
+        <tbody>${offers.map(o => `
+          <tr>
+            <td><strong>${esc(o.name)}</strong>${o.description ? `<br><small style="color:var(--text-muted)">${esc(o.description)}</small>` : ''}</td>
+            <td>${typeBadge(o.offerType)}</td>
+            <td>${activeBadge(!!o.isActive)}</td>
+            <td>${formatDate(o.startDate)}<br><small style="color:var(--text-muted)">to ${formatDate(o.endDate)}</small></td>
+            <td>
+              <small style="color:var(--text-muted)">
+                ${o.currentGlobalUses || 0}/${o.globalMaxUses || '∞'} global<br>
+                max ${o.maxUsesPerCustomer || 1}/customer
+              </small>
+            </td>
+            <td>
+              ${o.isActive
+                ? `<button class="btn btn-sm btn-outline" data-action="deactivate" data-id="${esc(o.id)}">Deactivate</button>`
+                : `<button class="btn btn-sm btn-success" data-action="activate" data-id="${esc(o.id)}">Activate</button>`}
+            </td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    offersList.innerHTML = emptyMsg('Failed to load offers');
+    showAlert(err.error?.message || 'Failed to load offers', 'danger');
+  }
+}
+
+offersList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  btn.disabled = true;
+  try {
+    await API.post(`/api/offers/${id}/${action}`);
+    showAlert(action === 'activate' ? 'Offer activated' : 'Offer deactivated', 'success');
+    await loadOffers();
+  } catch (err) {
+    showAlert(err.error?.message || 'Action failed', 'danger');
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('showCreateBtn').addEventListener('click', () => {
+  createFormCard.style.display = 'block';
+  if (!document.getElementById('startDate').value) {
+    document.getElementById('startDate').value = new Date().toISOString().slice(0, 10);
+  }
+  document.getElementById('offerName').focus();
+});
+
+document.getElementById('cancelCreateBtn').addEventListener('click', () => {
+  createFormCard.style.display = 'none';
+  document.getElementById('createOfferForm').reset();
+});
+
+document.getElementById('createOfferForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('createSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Creating...';
+  try {
+    const payload = {
+      name: document.getElementById('offerName').value.trim(),
+      offerType: document.getElementById('offerType').value,
+      startDate: document.getElementById('startDate').value,
+      endDate: document.getElementById('endDate').value,
+      maxUsesPerCustomer: Number(document.getElementById('maxUsesPerCustomer').value || 1),
+      priority: Number(document.getElementById('priority').value || 0),
+      stackable: document.getElementById('stackable').checked,
+    };
+    const description = document.getElementById('offerDescription').value.trim();
+    if (description) payload.description = description;
+    const terms = document.getElementById('offerTerms').value.trim();
+    if (terms) payload.terms = terms;
+    const globalMax = document.getElementById('globalMaxUses').value;
+    if (globalMax) payload.globalMaxUses = Number(globalMax);
+    const minPurchase = document.getElementById('minPurchase').value;
+    if (minPurchase) payload.conditions = { minimumPurchaseAmount: Number(minPurchase) };
+
+    await API.post('/api/offers', payload);
+    showAlert('Offer created', 'success');
+    e.target.reset();
+    createFormCard.style.display = 'none';
+    await loadOffers();
+  } catch (err) {
+    showAlert(err.error?.message || 'Failed to create offer', 'danger');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Offer';
+  }
+});
+
+loadOffers();
+</script>
+<%- include('../partials/footer') %>

@@ -1,7 +1,12 @@
 import { db } from '../config/database';
+import type { Knex } from 'knex';
 import { env } from '../config';
 import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
+import { newId } from '../utils/crypto';
+import { serializeClaim, serializeNotification } from '../utils/serialize';
+
+type Db = Knex | Knex.Transaction;
 
 interface ClaimInput {
   receiptNumber: string;
@@ -72,6 +77,10 @@ export class ClaimService {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
 
+    if (Number.isNaN(purchaseDate.getTime())) {
+      throw createAppError('Invalid purchase date', 400, 'INVALID_DATE');
+    }
+
     if (purchaseDate > today) {
       throw createAppError(
         'Purchase date cannot be in the future',
@@ -91,10 +100,15 @@ export class ClaimService {
       );
     }
 
+    // Store as YYYY-MM-DD string — MySQL DATE column rejects Date objects under some drivers,
+    // and SQLite would coerce inconsistently.
+    const purchaseDateStr = input.purchaseDate.slice(0, 10);
+
     const claim = await db('receipt_claims').insert({
+      id: newId(),
       customer_id: customerId,
       receipt_number: normalizedNumber,
-      purchase_date: purchaseDate,
+      purchase_date: purchaseDateStr,
       submitted_amount: input.submittedAmount,
       submitted_articles: input.submittedArticles ? JSON.stringify(input.submittedArticles) : null,
       receipt_image_path: input.receiptImagePath,
@@ -115,7 +129,7 @@ export class ClaimService {
       { claimId: claim[0].id },
     );
 
-    return claim[0] as Claim;
+    return serializeClaim(claim[0] as Record<string, any>) as unknown as Claim;
   }
 
   static async getCustomerClaims(
@@ -141,7 +155,10 @@ export class ClaimService {
       .limit(limit)
       .offset(offset);
 
-    return { claims: claims as Claim[], total };
+    return {
+      claims: claims.map((row) => serializeClaim(row as Record<string, any>)) as unknown as Claim[],
+      total,
+    };
   }
 
   static async getClaimById(claimId: string, customerId: string): Promise<Claim> {
@@ -154,7 +171,7 @@ export class ClaimService {
       throw createAppError('Claim not found', 404, 'CLAIM_NOT_FOUND');
     }
 
-    return claim as Claim;
+    return serializeClaim(claim as Record<string, any>) as unknown as Claim;
   }
 
   static async resubmitClaim(
@@ -192,7 +209,7 @@ export class ClaimService {
 
     log.info('Claim resubmitted', { claimId, customerId });
 
-    return updated[0] as Claim;
+    return serializeClaim(updated[0] as Record<string, any>) as unknown as Claim;
   }
 
   static async createNotification(
@@ -201,8 +218,10 @@ export class ClaimService {
     title: string,
     message: string,
     data?: Record<string, unknown>,
+    client: Db = db,
   ): Promise<void> {
-    await db('notifications').insert({
+    await client('notifications').insert({
+      id: newId(),
       user_id: userId,
       type,
       title,
@@ -240,7 +259,7 @@ export class ClaimService {
       .count('* as count');
 
     return {
-      notifications,
+      notifications: notifications.map((row) => serializeNotification(row as Record<string, any>)),
       unreadCount: Number(unreadResult?.count || 0),
       total,
     };

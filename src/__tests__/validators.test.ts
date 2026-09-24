@@ -51,9 +51,17 @@ describe('Validators', () => {
       expect(amountSchema.parse(99999.99)).toBe(99999.99);
     });
 
+    it('should accept string amounts from multipart forms', () => {
+      expect(amountSchema.parse('0.01')).toBe(0.01);
+      expect(amountSchema.parse('1500.00')).toBe(1500);
+      expect(amountSchema.parse('1000')).toBe(1000);
+    });
+
     it('should reject invalid amounts', () => {
       expect(() => amountSchema.parse(0)).toThrow();
       expect(() => amountSchema.parse(-100)).toThrow();
+      expect(() => amountSchema.parse('abc')).toThrow();
+      expect(() => amountSchema.parse('')).toThrow();
     });
   });
 });

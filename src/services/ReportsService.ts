@@ -13,7 +13,10 @@ export class ReportsService {
   }> {
     const [claimStats] = await db('receipt_claims')
       .select(
-        db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as pendingClaims', ['PENDING_REVIEW']),
+        db.raw(
+          'SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END) as pendingClaims',
+          ['PENDING_REVIEW', 'REQUEST_CLEARER_IMAGE'],
+        ),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as approvedClaims', ['APPROVED']),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as rejectedClaims', ['REJECTED']),
       );
@@ -50,7 +53,10 @@ export class ReportsService {
         db.raw('COUNT(*) as total'),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as approved', ['APPROVED']),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as rejected', ['REJECTED']),
-        db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as pending', ['PENDING_REVIEW']),
+        db.raw(
+          'SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END) as pending',
+          ['PENDING_REVIEW', 'REQUEST_CLEARER_IMAGE'],
+        ),
       )
       .where('created_at', '>=', startDate)
       .where('created_at', '<=', endDate)

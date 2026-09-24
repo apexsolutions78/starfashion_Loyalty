@@ -1,0 +1,131 @@
+<%- include('../partials/admin-header', { active: 'audit' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Audit Logs</h1>
+    <span id="totalCount" style="color:var(--text-muted)"></span>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <form id="filterForm" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:180px;margin:0">
+        <label for="search">Search</label>
+        <input type="text" id="search" placeholder="Action, actor, entity…">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label for="action">Action</label>
+        <select id="action">
+          <option value="">All actions</option>
+          <option value="RULE_ACTIVATED">Rule Activated</option>
+          <option value="RULE_DEACTIVATED">Rule Deactivated</option>
+          <option value="OFFER_ACTIVATED">Offer Activated</option>
+          <option value="OFFER_DEACTIVATED">Offer Deactivated</option>
+          <option value="CLAIM_APPROVED">Claim Approved</option>
+          <option value="CLAIM_REJECTED">Claim Rejected</option>
+          <option value="CLAIM_REQUEST_IMAGE">Claim Request Image</option>
+          <option value="VOUCHER_USED">Voucher Used</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label for="entityType">Entity</label>
+        <select id="entityType">
+          <option value="">All entities</option>
+          <option value="loyalty_rule">Loyalty Rule</option>
+          <option value="offer">Offer</option>
+          <option value="receipt_claim">Receipt Claim</option>
+          <option value="redemption_voucher">Redemption Voucher</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Filter</button>
+      <button type="button" class="btn btn-outline" id="resetBtn">Reset</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div id="auditList"><div class="spinner"></div></div>
+    <div id="pager" style="display:flex;gap:0.75rem;justify-content:flex-end;align-items:center;margin-top:1rem"></div>
+  </div>
+</div>
+<script>
+const emptyMsg = (msg) => `<p style="text-align:center;color:var(--text-muted);padding:1.5rem">${msg}</p>`;
+
+function actionBadge(action) {
+  if (!action) return '<span class="badge badge-pending">UNKNOWN</span>';
+  if (action.includes('ACTIVATED') || action.includes('APPROVED')) return `<span class="badge badge-active">${action.replace(/_/g, ' ')}</span>`;
+  if (action.includes('DEACTIVATED') || action.includes('REJECTED')) return `<span class="badge badge-rejected">${action.replace(/_/g, ' ')}</span>`;
+  return `<span class="badge badge-pending">${action.replace(/_/g, ' ')}</span>`;
+}
+
+let state = { search: '', action: '', entityType: '', offset: 0, limit: 20, total: 0 };
+
+function renderPager() {
+  const { total, limit, offset } = state;
+  if (!total) { document.getElementById('pager').innerHTML = ''; return; }
+  document.getElementById('pager').innerHTML = `
+    <small style="color:var(--text-muted)">${offset + 1}-${Math.min(offset + limit, total)} of ${total}</small>
+    <button class="btn btn-sm btn-outline" id="prevBtn" ${offset <= 0 ? 'disabled' : ''}>Prev</button>
+    <button class="btn btn-sm btn-outline" id="nextBtn" ${offset + limit >= total ? 'disabled' : ''}>Next</button>`;
+  document.getElementById('prevBtn')?.addEventListener('click', () => { state.offset = Math.max(0, offset - limit); load(); });
+  document.getElementById('nextBtn')?.addEventListener('click', () => { state.offset = offset + limit; load(); });
+}
+
+async function load() {
+  try {
+    document.getElementById('auditList').innerHTML = '<div class="spinner"></div>';
+    const params = new URLSearchParams({ limit: String(state.limit), offset: String(state.offset) });
+    if (state.search) params.set('search', state.search);
+    if (state.action) params.set('action', state.action);
+    if (state.entityType) params.set('entityType', state.entityType);
+    const data = await API.get(`/api/admin/audit-logs?${params}`);
+    state.total = data.total;
+    document.getElementById('totalCount').textContent = `${data.total} events`;
+    renderPager();
+
+    if (!data.logs.length) {
+      document.getElementById('auditList').innerHTML = emptyMsg('No audit events found');
+      return;
+    }
+
+    document.getElementById('auditList').innerHTML = `
+      <table class="table">
+        <thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Entity</th><th>IP</th></tr></thead>
+        <tbody>${data.logs.map(l => `
+          <tr>
+            <td>${formatDateTime(l.created_at)}</td>
+            <td>${actionBadge(l.action)}</td>
+            <td>${esc(l.actorEmail) || '<span style="color:var(--text-muted)">system</span>'}${l.actorRole ? `<br><small style="color:var(--text-muted)">${esc(l.actorRole)}</small>` : ''}</td>
+            <td><small style="color:var(--text-muted)">${esc(l.entity_type) || '-'}${l.entity_id ? `<br>${esc(l.entity_id)}` : ''}</small></td>
+            <td><small style="color:var(--text-muted)">${esc(l.ip_address) || '-'}</small></td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    document.getElementById('auditList').innerHTML = emptyMsg('Failed to load audit logs');
+    showAlert(err.error?.message || 'Failed to load audit logs', 'danger');
+  }
+}
+
+document.getElementById('filterForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  state.search = document.getElementById('search').value.trim();
+  state.action = document.getElementById('action').value;
+  state.entityType = document.getElementById('entityType').value;
+  state.offset = 0;
+  load();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  document.getElementById('search').value = '';
+  document.getElementById('action').value = '';
+  document.getElementById('entityType').value = '';
+  state.search = '';
+  state.action = '';
+  state.entityType = '';
+  state.offset = 0;
+  load();
+});
+
+load();
+</script>
+<%- include('../partials/footer') %>

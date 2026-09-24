@@ -9,11 +9,12 @@
     <form id="claimForm" enctype="multipart/form-data">
       <div class="form-group">
         <label>Receipt Image *</label>
-        <div class="upload-area">
-          <input type="file" id="receiptImage" name="receiptImage" accept="image/jpeg,image/png,application/pdf" required>
+        <div class="upload-area" data-max-bytes="8388608" role="button" aria-label="Upload receipt image">
+          <input type="file" id="receiptImage" name="receiptImage" accept="image/jpeg,image/png,application/pdf" required tabindex="-1">
           <div class="icon"> </div>
           <p>Click or drag to upload receipt image</p>
           <small>JPEG, PNG, or PDF (max 8MB)</small>
+          <div class="file-name" hidden></div>
         </div>
         <img class="upload-preview" style="display:none" alt="Preview">
       </div>
@@ -47,11 +48,18 @@
 <script>
 document.getElementById('claimForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const fileInput = document.getElementById('receiptImage');
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    showAlert('Please select a receipt image first', 'danger');
+    return;
+  }
+
   const btn = e.target.querySelector('button[type="submit"]');
   btn.disabled = true; btn.textContent = 'Uploading...';
 
   const formData = new FormData();
-  formData.append('receiptImage', document.getElementById('receiptImage').files[0]);
+  formData.append('receiptImage', file);
   formData.append('receiptNumber', document.getElementById('receiptNumber').value);
   formData.append('purchaseDate', document.getElementById('purchaseDate').value);
   formData.append('submittedAmount', document.getElementById('submittedAmount').value);
@@ -63,7 +71,7 @@ document.getElementById('claimForm').addEventListener('submit', async (e) => {
     showAlert('Receipt submitted for review! This normally takes 24-48 hours.', 'success');
     setTimeout(() => window.location.href = '/claims', 2000);
   } catch (err) {
-    showAlert(err.error?.message || 'Upload failed', 'danger');
+    showAlert(err.error?.message || err.message || 'Upload failed', 'danger');
     btn.disabled = false; btn.textContent = 'Submit for Review';
   }
 });

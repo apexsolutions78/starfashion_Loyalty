@@ -8,23 +8,23 @@
   <div class="grid-2">
     <div class="card">
       <div class="card-header">Receipt Image</div>
-      <img id="receiptImage" style="width:100%;border-radius:var(--radius)" alt="Receipt">
+      <img id="receiptImage" style="width:100%;border-radius:var(--radius-sm)" alt="Receipt">
     </div>
     <div>
       <div class="card">
         <div class="card-header">Submitted Details</div>
-        <p><strong>Receipt #:</strong> <span id="receiptNumber"></span></p>
-        <p><strong>Purchase Date:</strong> <span id="purchaseDate"></span></p>
-        <p><strong>Submitted Amount:</strong> <span id="submittedAmount"></span></p>
-        <p><strong>Articles:</strong> <span id="articles"></span></p>
-        <p><strong>Submitted:</strong> <span id="createdAt"></span></p>
+        <p style="margin:0.4rem 0"><strong>Receipt #:</strong> <span id="receiptNumber"></span></p>
+        <p style="margin:0.4rem 0"><strong>Purchase Date:</strong> <span id="purchaseDate"></span></p>
+        <p style="margin:0.4rem 0"><strong>Submitted Amount:</strong> <span id="submittedAmount"></span></p>
+        <p style="margin:0.4rem 0"><strong>Articles:</strong> <span id="articles"></span></p>
+        <p style="margin:0.4rem 0"><strong>Submitted:</strong> <span id="createdAt"></span></p>
       </div>
 
       <div class="card">
         <div class="card-header">Customer Info</div>
-        <p><strong>Name:</strong> <span id="customerName"></span></p>
-        <p><strong>Email:</strong> <span id="customerEmail"></span></p>
-        <p><strong>Mobile:</strong> <span id="customerMobile"></span></p>
+        <p style="margin:0.4rem 0"><strong>Name:</strong> <span id="customerName"></span></p>
+        <p style="margin:0.4rem 0"><strong>Email:</strong> <span id="customerEmail"></span></p>
+        <p style="margin:0.4rem 0"><strong>Mobile:</strong> <span id="customerMobile"></span></p>
         <div id="customerHistory" style="margin-top:0.5rem"></div>
       </div>
 
@@ -70,7 +70,10 @@ async function loadClaim() {
     document.getElementById('receiptNumber').textContent = c.receiptNumber;
     document.getElementById('purchaseDate').textContent = formatDate(c.purchaseDate);
     document.getElementById('submittedAmount').textContent = formatCurrency(c.submittedAmount);
-    document.getElementById('articles').textContent = c.submittedArticles || '-';
+    const articles = Array.isArray(c.submittedArticles)
+      ? c.submittedArticles.join(', ')
+      : (c.submittedArticles || '-');
+    document.getElementById('articles').textContent = articles;
     document.getElementById('createdAt').textContent = formatDateTime(c.createdAt);
     document.getElementById('customerName').textContent = c.customerName;
     document.getElementById('customerEmail').textContent = c.customerEmail;
@@ -81,39 +84,63 @@ async function loadClaim() {
     if (data.customerHistory) {
       const h = data.customerHistory;
       document.getElementById('customerHistory').innerHTML = `
-        <small style="color:var(--text-light)">
-          Claims: ${h.totalClaims} total, ${h.approvedClaims} approved, ${h.rejectedClaims} rejected, ${h.pendingClaims} pending
+        <small style="color:var(--text-muted)">
+          Claims: ${Number(h.totalClaims || 0)} total, ${Number(h.approvedClaims || 0)} approved, ${Number(h.rejectedClaims || 0)} rejected, ${Number(h.pendingClaims || 0)} pending
         </small>`;
     }
   } catch (err) {
-    showAlert('Failed to load claim', 'danger');
+    showAlert(err.error?.message || 'Failed to load claim', 'danger');
   }
 }
 
 document.getElementById('decisionForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const action = e.submitter.value;
-  const btn = e.submitter;
+  const submitter = e.submitter || null;
+  if (!submitter || !submitter.value) {
+    showAlert('Please click Approve or Reject explicitly', 'info');
+    return;
+  }
+  const action = submitter.value;
+  const btn = submitter;
   btn.disabled = true;
 
   try {
     if (action === 'approve') {
+      if (!confirm('Approve this claim and credit points?')) {
+        btn.disabled = false;
+        return;
+      }
+      const submitted = Number(document.getElementById('submittedAmount').textContent.replace(/[^0-9.]/g, '')) || 0;
+      const approvedAmount = parseFloat(document.getElementById('approvedAmount').value);
+      const eligibleAmount = parseFloat(document.getElementById('eligibleAmount').value);
+      if (submitted > 0 && (approvedAmount > submitted || eligibleAmount > submitted)) {
+        showAlert('Approved/eligible amount cannot exceed submitted amount', 'danger');
+        btn.disabled = false;
+        return;
+      }
       await API.post(`/api/review/claims/${claimId}/approve`, {
-        approvedAmount: parseFloat(document.getElementById('approvedAmount').value),
-        eligibleAmount: parseFloat(document.getElementById('eligibleAmount').value),
+        approvedAmount,
+        eligibleAmount,
         reviewerNotes: document.getElementById('reviewerNotes').value || undefined,
       });
       showAlert('Claim approved!', 'success');
     } else {
-      const reason = document.getElementById('rejectionReason').value;
-      if (!reason) { showAlert('Rejection reason is required', 'danger'); btn.disabled = false; return; }
+      const reasonField = document.getElementById('rejectionReason');
+      const reason = reasonField.value.trim();
+      if (!reason) {
+        document.getElementById('rejectReasonGroup').style.display = 'block';
+        reasonField.focus();
+        showAlert('Rejection reason is required', 'danger');
+        if (btn) btn.disabled = false;
+        return;
+      }
       await API.post(`/api/review/claims/${claimId}/reject`, { rejectionReason: reason });
       showAlert('Claim rejected', 'success');
     }
     setTimeout(() => window.location.href = '/admin/review', 1500);
   } catch (err) {
     showAlert(err.error?.message || 'Action failed', 'danger');
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 });
 

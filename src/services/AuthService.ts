@@ -1,9 +1,10 @@
 import { db } from '../config/database';
 import { UserModel } from '../models/UserModel';
-import { hashPassword, verifyPassword, generateToken, hashToken, generateOTP } from '../utils/crypto';
+import { hashPassword, verifyPassword, generateToken, hashToken, generateOTP, newId } from '../utils/crypto';
 import { createAppError } from '../middleware/errorHandler';
 import { Role } from '../middleware/auth';
 import { createRequestLogger } from '../utils/logger';
+import { MailService } from './MailService';
 
 interface RegisterInput {
   email: string;
@@ -47,7 +48,9 @@ export class AuthService {
     const passwordHash = await hashPassword(input.password);
 
     const user = await db.transaction(async (trx) => {
-      const newUser = await UserModel.create({
+      const userId = newId();
+      await trx('users').insert({
+        id: userId,
         email: input.email.toLowerCase().trim(),
         mobile: input.mobile,
         password_hash: passwordHash,
@@ -57,9 +60,8 @@ export class AuthService {
         mobile_verified: false,
       });
 
-      const userId = (newUser as any).id;
-
       await trx('customer_profiles').insert({
+        id: newId(),
         user_id: userId,
         full_name: input.fullName,
         marketing_consent: input.marketingConsent || false,
@@ -68,23 +70,27 @@ export class AuthService {
 
       await trx('consents').insert([
         {
+          id: newId(),
           user_id: userId,
           consent_type: 'loyalty_program',
           granted: input.loyaltyConsent,
         },
         {
+          id: newId(),
           user_id: userId,
           consent_type: 'marketing',
           granted: input.marketingConsent || false,
         },
       ]);
 
+      const newUser = await trx('users').where('id', userId).first();
       log.info('Customer registered', { userId });
       return newUser;
     });
 
     const userId = (user as any).id;
-    await this.sendVerificationEmail(userId, input.email, requestId);
+    const fullName = (user as any).full_name || input.fullName;
+    await this.sendVerificationEmail(userId, input.email, requestId, fullName);
     await this.sendVerificationOTP(userId, input.mobile, requestId);
 
     return {
@@ -172,12 +178,14 @@ export class AuthService {
     const tokenHash = hashToken(token);
 
     await db('password_reset_tokens').insert({
+      id: newId(),
       user_id: user.id,
       token_hash: tokenHash,
       expires_at: new Date(Date.now() + 60 * 60 * 1000),
     });
 
-    log.info('Password reset token created', { userId: user.id });
+    const mail = await MailService.sendPasswordReset(user.email, token);
+    log.info('Password reset email sent', { userId: user.id, mode: mail.mode });
   }
 
   static async resetPassword(token: string, newPassword: string, requestId: string): Promise<void> {
@@ -204,13 +212,14 @@ export class AuthService {
     log.info('Password reset completed', { userId: resetToken.user_id });
   }
 
-  static async sendVerificationEmail(userId: string, email: string, requestId: string): Promise<string> {
+  static async sendVerificationEmail(userId: string, email: string, requestId: string, fullName?: string): Promise<string> {
     const log = createRequestLogger(requestId);
 
     const token = generateToken();
     const tokenHash = hashToken(token);
 
     await db('contact_verifications').insert({
+      id: newId(),
       user_id: userId,
       type: 'email',
       token_hash: tokenHash,
@@ -219,7 +228,8 @@ export class AuthService {
       max_attempts: 5,
     });
 
-    log.info('Email verification token created', { userId });
+    const mail = await MailService.sendVerificationEmail(email, fullName || '', token);
+    log.info('Email verification sent', { userId, mode: mail.mode });
     return token;
   }
 
@@ -230,6 +240,7 @@ export class AuthService {
     const otpHash = hashToken(otp);
 
     await db('contact_verifications').insert({
+      id: newId(),
       user_id: userId,
       type: 'mobile',
       token_hash: otpHash,
@@ -238,8 +249,43 @@ export class AuthService {
       max_attempts: 5,
     });
 
-    log.info('Mobile verification OTP created', { userId });
+    const mail = await MailService.sendVerificationOtp(mobile, otp);
+    log.info('Mobile OTP sent', { userId, mode: mail.mode });
     return otp;
+  }
+
+  static async resendVerification(userId: string, type: 'email' | 'mobile', requestId: string): Promise<void> {
+    const log = createRequestLogger(requestId);
+
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      throw createAppError('User not found', 404, 'USER_NOT_FOUND');
+    }
+
+    if (type === 'email') {
+      if (user.email_verified) {
+        throw createAppError('Email already verified', 400, 'ALREADY_VERIFIED');
+      }
+      const profile = await db('customer_profiles').where('user_id', userId).first();
+      await db('contact_verifications')
+        .where('user_id', userId)
+        .where('type', 'email')
+        .where('used', false)
+        .update({ used: true });
+      await this.sendVerificationEmail(userId, user.email, requestId, profile?.full_name);
+      return;
+    }
+
+    if (user.mobile_verified) {
+      throw createAppError('Mobile already verified', 400, 'ALREADY_VERIFIED');
+    }
+    await db('contact_verifications')
+      .where('user_id', userId)
+      .where('type', 'mobile')
+      .where('used', false)
+      .update({ used: true });
+    await this.sendVerificationOTP(userId, user.mobile, requestId);
+    log.info('Verification resent', { userId, type });
   }
 
   static async verifyContact(userId: string, token: string, type: 'email' | 'mobile', requestId: string): Promise<void> {
@@ -254,6 +300,29 @@ export class AuthService {
       .where('expires_at', '>', new Date())
       .first();
 
+    await this.consumeVerification(verification, type);
+    log.info(`Contact verified: ${type}`, { userId });
+  }
+
+  static async verifyContactByToken(token: string, type: 'email' | 'mobile', requestId: string): Promise<void> {
+    const log = createRequestLogger(requestId);
+
+    const tokenHash = hashToken(token);
+    const verification = await db('contact_verifications')
+      .where('type', type)
+      .where('token_hash', tokenHash)
+      .where('used', false)
+      .where('expires_at', '>', new Date())
+      .first();
+
+    await this.consumeVerification(verification, type);
+    log.info(`Contact verified by token: ${type}`, { userId: verification.user_id });
+  }
+
+  private static async consumeVerification(
+    verification: { id: string; user_id: string; attempts: number; max_attempts: number } | undefined,
+    type: 'email' | 'mobile',
+  ): Promise<void> {
     if (!verification) {
       throw createAppError('Invalid or expired verification token', 400, 'INVALID_TOKEN');
     }
@@ -269,10 +338,8 @@ export class AuthService {
         .update({ used: true });
 
       const updateField = type === 'email' ? 'email_verified' : 'mobile_verified';
-      await trx('users').where('id', userId).update({ [updateField]: true });
+      await trx('users').where('id', verification.user_id).update({ [updateField]: true });
     });
-
-    log.info(`Contact verified: ${type}`, { userId });
   }
 
   static async getProfile(userId: string) {

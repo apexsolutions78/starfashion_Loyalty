@@ -1,10 +1,24 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import rateLimit from 'express-rate-limit';
 import { AuthService } from '../services/AuthService';
 import { authenticate, authorizeCustomer } from '../middleware/auth';
-import { createAppError } from '../middleware/errorHandler';
+import { issueCsrfToken } from '../middleware/csrf';
+import { env } from '../config';
 
 const router = Router();
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: { code: 'RATE_LIMIT', message: 'Too many attempts. Please wait and try again.' },
+    });
+  },
+});
 
 const registerSchema = z.object({
   email: z.string().email().toLowerCase().trim(),
@@ -32,6 +46,10 @@ const verifyContactSchema = z.object({
   type: z.enum(['email', 'mobile']),
 });
 
+const resendVerificationSchema = z.object({
+  type: z.enum(['email', 'mobile']).default('email'),
+});
+
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: z
@@ -56,42 +74,71 @@ const resetPasswordSchema = z.object({
     .regex(/[0-9]/),
 });
 
-router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/register', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = registerSchema.parse(req.body);
     const result = await AuthService.register(input, req.requestId);
-    req.session.userId = result.user.id;
-    req.session.userRole = result.user.role;
-    res.status(201).json({
-      message: 'Registration successful. Please verify your email and mobile.',
-      user: result.user,
+    req.session.regenerate((regenErr) => {
+      if (regenErr) {
+        return next(regenErr);
+      }
+      req.session.userId = result.user.id;
+      req.session.userRole = result.user.role;
+      const csrfToken = issueCsrfToken(req.session);
+      res.status(201).json({
+        message: 'Registration successful. Please verify your email and mobile.',
+        user: result.user,
+        csrfToken,
+      });
     });
   } catch (error) {
     next(error);
   }
 });
 
-router.post('/verify-contact', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/verify-contact', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, type } = verifyContactSchema.parse(req.body);
     const userId = req.session.userId;
-    if (!userId) {
-      return next(createAppError('Please login first', 401, 'AUTH_REQUIRED'));
+    if (userId) {
+      await AuthService.verifyContact(userId, token, type, req.requestId);
+    } else {
+      await AuthService.verifyContactByToken(token, type, req.requestId);
     }
-    await AuthService.verifyContact(userId, token, type, req.requestId);
     res.json({ message: `${type} verified successfully` });
   } catch (error) {
     next(error);
   }
 });
 
-router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/resend-verification', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { type } = resendVerificationSchema.parse(req.body ?? {});
+    await AuthService.resendVerification(req.user!.id, type, req.requestId);
+    res.json({
+      message:
+        env.NODE_ENV !== 'production'
+          ? `Verification ${type} re-sent. In development the token is printed in the server console and logs/combined.log.`
+          : `Verification ${type} has been sent.`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/login', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = loginSchema.parse(req.body);
     const result = await AuthService.login(input, req.requestId);
-    req.session.userId = result.user.id;
-    req.session.userRole = result.user.role;
-    res.json({ message: 'Login successful', user: result.user });
+    req.session.regenerate((regenErr) => {
+      if (regenErr) {
+        return next(regenErr);
+      }
+      req.session.userId = result.user.id;
+      req.session.userRole = result.user.role;
+      const csrfToken = issueCsrfToken(req.session);
+      res.json({ message: 'Login successful', user: result.user, csrfToken });
+    });
   } catch (error) {
     next(error);
   }
@@ -112,7 +159,7 @@ router.post('/logout', authenticate, async (req: Request, res: Response, next: N
   }
 });
 
-router.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/forgot-password', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email } = forgotPasswordSchema.parse(req.body);
     await AuthService.forgotPassword(email, req.requestId);
@@ -122,7 +169,7 @@ router.post('/forgot-password', async (req: Request, res: Response, next: NextFu
   }
 });
 
-router.post('/reset-password', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/reset-password', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, newPassword } = resetPasswordSchema.parse(req.body);
     await AuthService.resetPassword(token, newPassword, req.requestId);

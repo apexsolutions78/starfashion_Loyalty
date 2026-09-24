@@ -10,27 +10,31 @@
 </div>
 <script>
 async function loadOffers() {
+  const list = document.getElementById('offersList');
   try {
     const data = await API.get('/api/offers/active');
-    if (!data.offers.length) {
-      document.getElementById('offersList').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No active offers at the moment</p>';
+    const offers = Array.isArray(data?.offers) ? data.offers : [];
+    if (!offers.length) {
+      list.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">No active offers at the moment</p>';
       return;
     }
-    document.getElementById('offersList').innerHTML = data.offers.map(o => `
+    list.innerHTML = offers.map(o => `
       <div style="padding:1rem 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:start">
           <div>
-            <h3 style="margin-bottom:0.25rem">${o.name}</h3>
-            <p style="color:var(--text-light)">${o.description || ''}</p>
-            <small>Type: ${o.offer_type.replace(/_/g, ' ')} | Valid: ${formatDate(o.start_date)} - ${formatDate(o.end_date)}</small>
+            <h3 style="margin-bottom:0.25rem">${esc(o.name) || ''}</h3>
+            <p style="color:var(--text-secondary)">${esc(o.description) || ''}</p>
+            <small style="color:var(--text-muted)">Type: ${esc(String(o.offerType || 'offer').replace(/_/g, ' '))} | Valid: ${formatDate(o.startDate)} - ${formatDate(o.endDate)}</small>
           </div>
-          ${statusBadge(o.is_active ? 'ACTIVE' : 'EXPIRED')}
+          ${statusBadge(o.isActive ? 'ACTIVE' : 'EXPIRED')}
         </div>
-        ${o.terms ? `<p style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-light)"><em>${o.terms}</em></p>` : ''}
+        ${o.terms ? `<p style="margin-top:0.5rem;font-size:0.85rem;color:var(--text-muted)"><em>${esc(o.terms)}</em></p>` : ''}
       </div>
     `).join('');
   } catch (err) {
-    showAlert('Failed to load offers', 'danger');
+    const msg = err?.error?.message || err?.message || `HTTP ${err?.status || 'error'}`;
+    list.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:2rem">Failed to load offers: ${esc(msg)}</p>`;
+    showAlert(msg, 'danger');
   }
 }
 loadOffers();

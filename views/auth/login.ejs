@@ -33,6 +33,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
       email: document.getElementById('email').value,
       password: document.getElementById('password').value,
     });
+    if (data.csrfToken) setCsrfToken(data.csrfToken);
     window.location.href = data.user.role === 'customer' ? '/dashboard' : '/admin';
   } catch (err) {
     showAlert(err.error?.message || 'Login failed', 'danger');

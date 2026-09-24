@@ -47,7 +47,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
   const btn = e.target.querySelector('button[type="submit"]');
   btn.disabled = true; btn.textContent = 'Creating account...';
   try {
-    await API.post('/api/auth/register', {
+    const data = await API.post('/api/auth/register', {
       fullName: document.getElementById('fullName').value,
       email: document.getElementById('email').value,
       mobile: document.getElementById('mobile').value,
@@ -55,6 +55,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
       loyaltyConsent: document.getElementById('loyaltyConsent').checked,
       marketingConsent: document.getElementById('marketingConsent').checked,
     });
+    if (data.csrfToken) setCsrfToken(data.csrfToken);
     showAlert('Account created! Please verify your email and mobile.', 'success');
     setTimeout(() => window.location.href = '/login', 2000);
   } catch (err) {

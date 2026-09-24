@@ -4,6 +4,7 @@ dist/
 .env.local
 .env.production
 private-storage/
+data/
 logs/
 coverage/
 *.log

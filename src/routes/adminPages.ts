@@ -18,24 +18,28 @@ router.get('/review/:id', (req: Request, res: Response) => {
   res.render('admin/review-detail', { title: 'Review Claim', active: 'review', claimId: req.params.id, layout: 'layout' });
 });
 
+router.get('/users', (req: Request, res: Response) => {
+  res.render('admin/users', { title: 'Users', active: 'users', layout: 'layout' });
+});
+
 router.get('/customers', (req: Request, res: Response) => {
-  res.render('admin/dashboard', { title: 'Customers', active: 'customers', layout: 'layout' });
+  res.render('admin/customers', { title: 'Customers', active: 'customers', layout: 'layout' });
 });
 
 router.get('/rules', (req: Request, res: Response) => {
-  res.render('admin/dashboard', { title: 'Rules', active: 'rules', layout: 'layout' });
+  res.render('admin/rules', { title: 'Loyalty Rules', active: 'rules', layout: 'layout' });
 });
 
 router.get('/offers', (req: Request, res: Response) => {
-  res.render('admin/dashboard', { title: 'Offers', active: 'offers', layout: 'layout' });
+  res.render('admin/offers', { title: 'Offers', active: 'offers', layout: 'layout' });
 });
 
 router.get('/ledger', (req: Request, res: Response) => {
-  res.render('admin/dashboard', { title: 'Points Ledger', active: 'ledger', layout: 'layout' });
+  res.render('admin/ledger', { title: 'Points Ledger', active: 'ledger', layout: 'layout' });
 });
 
 router.get('/audit', (req: Request, res: Response) => {
-  res.render('admin/dashboard', { title: 'Audit Logs', active: 'audit', layout: 'layout' });
+  res.render('admin/audit', { title: 'Audit Logs', active: 'audit', layout: 'layout' });
 });
 
 export default router;

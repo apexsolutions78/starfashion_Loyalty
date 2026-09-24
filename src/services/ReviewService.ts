@@ -3,6 +3,9 @@ import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
 import { ClaimService } from './ClaimService';
 import { PointsEngineService } from './PointsEngineService';
+import { OfferService } from './OfferService';
+import { newId } from '../utils/crypto';
+import { serializeClaim } from '../utils/serialize';
 import fs from 'fs/promises';
 
 interface ReviewDecision {
@@ -44,7 +47,7 @@ export class ReviewService {
 
     let query = db('receipt_claims')
       .join('users', 'receipt_claims.customer_id', 'users.id')
-      .join('customer_profiles', 'users.id', 'customer_profiles.user_id')
+      .leftJoin('customer_profiles', 'users.id', 'customer_profiles.user_id')
       .where('receipt_claims.status', 'PENDING_REVIEW')
       .select(
         'receipt_claims.*',
@@ -55,6 +58,7 @@ export class ReviewService {
 
     let countQuery = db('receipt_claims')
       .join('users', 'receipt_claims.customer_id', 'users.id')
+      .leftJoin('customer_profiles', 'users.id', 'customer_profiles.user_id')
       .where('receipt_claims.status', 'PENDING_REVIEW');
 
     if (options.search) {
@@ -79,13 +83,16 @@ export class ReviewService {
       .limit(limit)
       .offset(offset);
 
-    return { claims: claims as ClaimWithCustomer[], total };
+    return {
+      claims: claims.map((row) => serializeClaim(row as Record<string, any>)) as unknown as ClaimWithCustomer[],
+      total,
+    };
   }
 
   static async getClaimDetails(claimId: string): Promise<ClaimWithCustomer> {
     const claim = await db('receipt_claims')
       .join('users', 'receipt_claims.customer_id', 'users.id')
-      .join('customer_profiles', 'users.id', 'customer_profiles.user_id')
+      .leftJoin('customer_profiles', 'users.id', 'customer_profiles.user_id')
       .where('receipt_claims.id', claimId)
       .select(
         'receipt_claims.*',
@@ -99,7 +106,7 @@ export class ReviewService {
       throw createAppError('Claim not found', 404, 'CLAIM_NOT_FOUND');
     }
 
-    return claim as ClaimWithCustomer;
+    return serializeClaim(claim as Record<string, any>) as unknown as ClaimWithCustomer;
   }
 
   static async approveClaim(
@@ -127,9 +134,22 @@ export class ReviewService {
       throw createAppError('Eligible amount cannot exceed approved amount', 400, 'INVALID_AMOUNT');
     }
 
+    const submittedAmount = Number(claim.submitted_amount || 0);
+    if (submittedAmount > 0 && decision.approvedAmount > submittedAmount) {
+      throw createAppError('Approved amount cannot exceed submitted amount', 400, 'INVALID_AMOUNT');
+    }
+    if (submittedAmount > 0 && decision.eligibleAmount > submittedAmount) {
+      throw createAppError('Eligible amount cannot exceed submitted amount', 400, 'INVALID_AMOUNT');
+    }
+
+    const pointsCalc = await PointsEngineService.calculatePoints(decision.eligibleAmount, {
+      customerId: claim.customer_id,
+    });
+
     await db.transaction(async (trx) => {
-      await trx('receipt_claims')
+      const updated = await trx('receipt_claims')
         .where('id', claimId)
+        .where('status', 'PENDING_REVIEW')
         .update({
           status: 'APPROVED',
           approved_amount: decision.approvedAmount,
@@ -138,9 +158,16 @@ export class ReviewService {
           reviewed_by: reviewerId,
           reviewed_at: new Date(),
           updated_at: new Date(),
+          offer_snapshot:
+            pointsCalc.appliedOffers.length > 0 ? JSON.stringify(pointsCalc.appliedOffers) : null,
         });
 
+      if (!updated) {
+        throw createAppError('Claim no longer pending review', 409, 'CLAIM_NOT_PENDING');
+      }
+
       await trx('audit_logs').insert({
+        id: newId(),
         user_id: reviewerId,
         action: 'CLAIM_APPROVED',
         entity_type: 'receipt_claim',
@@ -152,8 +179,6 @@ export class ReviewService {
         }),
       });
 
-      const pointsCalc = await PointsEngineService.calculatePoints(decision.eligibleAmount);
-
       if (pointsCalc.totalPoints > 0) {
         await PointsEngineService.creditPoints(
           claim.customer_id,
@@ -163,7 +188,12 @@ export class ReviewService {
           pointsCalc.appliedOffers,
           reviewerId,
           requestId,
+          trx,
         );
+      }
+
+      for (const offer of pointsCalc.appliedOffers) {
+        await OfferService.recordOfferUse(offer.id, trx);
       }
 
       await ClaimService.createNotification(
@@ -172,6 +202,7 @@ export class ReviewService {
         'Receipt Approved',
         `Your receipt ${claim.receipt_number} has been approved. ${pointsCalc.totalPoints} points have been credited to your account.`,
         { claimId, approvedAmount: decision.approvedAmount, pointsEarned: pointsCalc.totalPoints },
+        trx,
       );
 
       log.info('Claim approved', {
@@ -206,8 +237,9 @@ export class ReviewService {
     }
 
     await db.transaction(async (trx) => {
-      await trx('receipt_claims')
+      const updated = await trx('receipt_claims')
         .where('id', claimId)
+        .where('status', 'PENDING_REVIEW')
         .update({
           status: 'REJECTED',
           rejection_reason: reason,
@@ -216,7 +248,12 @@ export class ReviewService {
           updated_at: new Date(),
         });
 
+      if (!updated) {
+        throw createAppError('Claim no longer pending review', 409, 'CLAIM_NOT_PENDING');
+      }
+
       await trx('audit_logs').insert({
+        id: newId(),
         user_id: reviewerId,
         action: 'CLAIM_REJECTED',
         entity_type: 'receipt_claim',
@@ -230,6 +267,7 @@ export class ReviewService {
         'Receipt Rejected',
         `Your receipt ${claim.receipt_number} was rejected. Reason: ${reason}`,
         { claimId, rejectionReason: reason },
+        trx,
       );
 
       log.info('Claim rejected', { claimId, reviewerId, reason });
@@ -254,8 +292,9 @@ export class ReviewService {
     }
 
     await db.transaction(async (trx) => {
-      await trx('receipt_claims')
+      const updated = await trx('receipt_claims')
         .where('id', claimId)
+        .where('status', 'PENDING_REVIEW')
         .update({
           status: 'REQUEST_CLEARER_IMAGE',
           reviewer_notes: notes,
@@ -264,7 +303,12 @@ export class ReviewService {
           updated_at: new Date(),
         });
 
+      if (!updated) {
+        throw createAppError('Claim no longer pending review', 409, 'CLAIM_NOT_PENDING');
+      }
+
       await trx('audit_logs').insert({
+        id: newId(),
         user_id: reviewerId,
         action: 'CLAIM_REQUEST_IMAGE',
         entity_type: 'receipt_claim',
@@ -278,6 +322,7 @@ export class ReviewService {
         'Clearer Image Required',
         `Please upload a clearer image of receipt ${claim.receipt_number}. Notes: ${notes}`,
         { claimId, notes },
+        trx,
       );
 
       log.info('Clearer image requested', { claimId, reviewerId });
@@ -318,7 +363,10 @@ export class ReviewService {
         db.raw('COUNT(*) as totalClaims'),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as approvedClaims', ['APPROVED']),
         db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as rejectedClaims', ['REJECTED']),
-        db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as pendingClaims', ['PENDING_REVIEW']),
+        db.raw(
+          'SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END) as pendingClaims',
+          ['PENDING_REVIEW', 'REQUEST_CLEARER_IMAGE'],
+        ),
         db.raw('SUM(CASE WHEN status = ? THEN approved_amount ELSE 0 END) as totalApprovedAmount', ['APPROVED']),
       )
       .first();

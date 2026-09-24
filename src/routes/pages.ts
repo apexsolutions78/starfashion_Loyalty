@@ -19,6 +19,22 @@ router.get('/forgot-password', (req: Request, res: Response) => {
   res.render('auth/forgot-password', { title: 'Forgot Password', layout: 'layout' });
 });
 
+router.get('/verify-email', (req: Request, res: Response) => {
+  res.render('auth/verify-email', {
+    title: 'Verify Email',
+    token: typeof req.query.token === 'string' ? req.query.token : '',
+    layout: 'layout',
+  });
+});
+
+router.get('/reset-password', (req: Request, res: Response) => {
+  res.render('auth/reset-password', {
+    title: 'Reset Password',
+    token: typeof req.query.token === 'string' ? req.query.token : '',
+    layout: 'layout',
+  });
+});
+
 router.get('/dashboard', authenticate, authorizeCustomer, (req: Request, res: Response) => {
   res.render('customer/dashboard', { title: 'Dashboard', active: 'dashboard', layout: 'layout' });
 });

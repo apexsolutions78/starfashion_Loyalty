@@ -23,7 +23,7 @@ async function loadPoints() {
     document.getElementById('balance').textContent = data.balance.toLocaleString();
 
     if (!data.entries.length) {
-      document.getElementById('ledger').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No points history yet</p>';
+      document.getElementById('ledger').innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">No points history yet</p>';
       return;
     }
     document.getElementById('ledger').innerHTML = `
@@ -32,16 +32,17 @@ async function loadPoints() {
         <tbody>${data.entries.map(e => `
           <tr>
             <td>${formatDateTime(e.created_at)}</td>
-            <td>${e.type.replace(/_/g, ' ')}</td>
+            <td>${esc(String(e.type || '').replace(/_/g, ' '))}</td>
             <td style="color:${e.points > 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600">
               ${e.points > 0 ? '+' : ''}${e.points}
             </td>
-            <td>${e.reason || '-'}</td>
+            <td>${esc(e.reason) || '-'}</td>
           </tr>
         `).join('')}</tbody>
       </table>`;
   } catch (err) {
-    showAlert('Failed to load points', 'danger');
+    document.getElementById('ledger').innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">Failed to load points history</p>';
+    showAlert(err.error?.message || 'Failed to load points', 'danger');
   }
 }
 loadPoints();

@@ -1,6 +1,7 @@
 import { db } from '../config/database';
 import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
+import { newId } from '../utils/crypto';
 
 interface RuleInput {
   name: string;
@@ -31,6 +32,7 @@ export class RuleService {
     const nextVersion = lastRule ? lastRule.version + 1 : 1;
 
     const [rule] = await db('loyalty_rules').insert({
+      id: newId(),
       version: nextVersion,
       name: input.name,
       rules_json: JSON.stringify(input.rules),
@@ -103,6 +105,7 @@ export class RuleService {
         .update({ is_active: true });
 
       await trx('audit_logs').insert({
+        id: newId(),
         action: 'RULE_ACTIVATED',
         entity_type: 'loyalty_rule',
         entity_id: id,
@@ -124,6 +127,7 @@ export class RuleService {
     await db('loyalty_rules').where('id', id).update({ is_active: false });
 
     await db('audit_logs').insert({
+      id: newId(),
       action: 'RULE_DEACTIVATED',
       entity_type: 'loyalty_rule',
       entity_id: id,

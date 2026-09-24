@@ -6,7 +6,7 @@ import { authenticate, authorizeAdmin } from '../middleware/auth';
 const router = Router();
 
 router.use(authenticate);
-router.use(authorizeAdmin('master_admin'));
+router.use(authorizeAdmin('reviewer', 'manager', 'master_admin'));
 
 const ruleSchema = z.object({
   name: z.string().min(1).max(255),
@@ -29,7 +29,7 @@ const ruleSchema = z.object({
   effectiveTo: z.string().optional().transform((s) => (s ? new Date(s) : undefined)),
 });
 
-router.get('/rules', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rules = await RuleService.getRules();
     res.json({ rules });
@@ -38,7 +38,7 @@ router.get('/rules', async (_req: Request, res: Response, next: NextFunction) =>
   }
 });
 
-router.get('/rules/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const rule = await RuleService.getRuleById(req.params.id as string);
     res.json({ rule });
@@ -47,7 +47,7 @@ router.get('/rules/:id', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
-router.post('/rules', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = ruleSchema.parse(req.body);
     const rule = await RuleService.createRule(input, req.user!.id, req.requestId);
@@ -57,7 +57,7 @@ router.post('/rules', async (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
-router.patch('/rules/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/:id', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = ruleSchema.partial().parse(req.body);
     const rule = await RuleService.updateRule(req.params.id as string, input, req.requestId);
@@ -67,7 +67,7 @@ router.patch('/rules/:id', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-router.post('/rules/:id/activate', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/:id/activate', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     await RuleService.activateRule(req.params.id as string, req.requestId);
     res.json({ message: 'Rule activated' });
@@ -76,7 +76,7 @@ router.post('/rules/:id/activate', async (req: Request, res: Response, next: Nex
   }
 });
 
-router.post('/rules/:id/deactivate', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/:id/deactivate', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     await RuleService.deactivateRule(req.params.id as string, req.requestId);
     res.json({ message: 'Rule deactivated' });

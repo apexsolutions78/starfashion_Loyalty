@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { createAppError } from './errorHandler';
+import { UserModel } from '../models/UserModel';
 
 export type Role = 'customer' | 'cashier' | 'reviewer' | 'manager' | 'master_admin';
 
@@ -18,11 +19,36 @@ declare global {
   }
 }
 
-export function authenticate(req: Request, _res: Response, next: NextFunction): void {
+export function loadSessionUser(req: Request, _res: Response, next: NextFunction): void {
+  if (req.session.userId && !req.user) {
+    req.user = {
+      id: req.session.userId,
+      email: '',
+      role: req.session.userRole as Role,
+    };
+  }
+  next();
+}
+
+export async function authenticate(req: Request, _res: Response, next: NextFunction): Promise<void> {
   if (!req.user) {
     return next(createAppError('Authentication required', 401, 'AUTH_REQUIRED'));
   }
-  next();
+  try {
+    // Re-validate role/status from DB so suspend/role-change takes effect immediately
+    const user = await UserModel.findById(req.user.id);
+    if (!user || user.status !== 'active') {
+      return next(createAppError('Account is not active', 403, 'ACCOUNT_INACTIVE'));
+    }
+    req.user.role = user.role as Role;
+    req.user.email = user.email;
+    if (req.session.userRole !== user.role) {
+      req.session.userRole = user.role;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 export function authorize(...roles: Role[]) {

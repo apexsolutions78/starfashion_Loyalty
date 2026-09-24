@@ -6,15 +6,15 @@
 
   <div class="card" style="max-width:500px;margin-bottom:1.5rem">
     <div class="card-header">Create Voucher</div>
-    <p style="margin-bottom:1rem;color:var(--text-light)">Your balance: <strong id="balance">-</strong> points</p>
+    <p style="margin-bottom:1rem;color:var(--text-secondary)">Your balance: <strong id="balance">-</strong> points</p>
     <form id="redeemForm">
       <div class="form-group">
         <label for="points">Points to Redeem</label>
         <input type="number" id="points" min="100" required placeholder="Minimum 100 points">
       </div>
-      <div id="quoteResult" style="display:none;margin-bottom:1rem;padding:1rem;background:var(--bg);border-radius:var(--radius)">
-        <p>Discount: <strong id="discountAmount">-</strong></p>
-        <p>Remaining balance: <strong id="remainingBalance">-</strong></p>
+      <div id="quoteResult" style="display:none;margin-bottom:1rem;padding:1rem;background:var(--bg-input);border-radius:var(--radius-sm);border:1px solid var(--border)">
+        <p style="margin:0.25rem 0">Discount: <strong id="discountAmount">-</strong></p>
+        <p style="margin:0.25rem 0">Remaining balance: <strong id="remainingBalance">-</strong></p>
       </div>
       <button type="submit" class="btn btn-primary btn-block">Create Voucher</button>
     </form>
@@ -35,24 +35,42 @@ async function loadRedemptions() {
     document.getElementById('balance').textContent = balanceRes.balance.toLocaleString();
 
     if (!vouchersRes.vouchers.length) {
-      document.getElementById('vouchers').innerHTML = '<p style="text-align:center;color:var(--text-light);padding:2rem">No vouchers yet</p>';
+      document.getElementById('vouchers').innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">No vouchers yet</p>';
       return;
     }
     document.getElementById('vouchers').innerHTML = `
       <table class="table">
-        <thead><tr><th>Code</th><th>Points</th><th>Discount</th><th>Status</th><th>Expires</th></tr></thead>
+        <thead><tr><th>Code</th><th>Points</th><th>Discount</th><th>Status</th><th>Expires</th><th>Action</th></tr></thead>
         <tbody>${vouchersRes.vouchers.map(v => `
           <tr>
-            <td><strong>${v.voucherCode}</strong></td>
+            <td><strong>${esc(v.voucherCode)}</strong></td>
             <td>${v.pointsRedeemed}</td>
             <td>${formatCurrency(v.discountAmount)}</td>
             <td>${statusBadge(v.status)}</td>
             <td>${formatDateTime(v.expiresAt)}</td>
+            <td>${v.status === 'ACTIVE'
+              ? `<button type="button" class="btn btn-sm btn-outline" data-action="cancel" data-id="${esc(v.id)}">Cancel</button>`
+              : '-'}</td>
           </tr>
         `).join('')}</tbody>
       </table>`;
+    document.getElementById('vouchers').querySelectorAll('button[data-action="cancel"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Cancel this voucher? Points will be restored to your balance.')) return;
+        btn.disabled = true;
+        try {
+          await API.post(`/api/redemptions/${btn.dataset.id}/cancel`);
+          showAlert('Voucher cancelled and points restored', 'success');
+          await loadRedemptions();
+        } catch (err) {
+          showAlert(err.error?.message || 'Failed to cancel voucher', 'danger');
+          btn.disabled = false;
+        }
+      });
+    });
   } catch (err) {
-    showAlert('Failed to load redemptions', 'danger');
+    document.getElementById('vouchers').innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem">Failed to load redemptions</p>';
+    showAlert(err.error?.message || 'Failed to load redemptions', 'danger');
   }
 }
 

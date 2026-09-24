@@ -1,0 +1,162 @@
+<%- include('../partials/admin-header', { active: 'users' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>Users</h1>
+    <button type="button" class="btn btn-primary" id="showCreateBtn">Create Admin</button>
+  </div>
+
+  <div id="alert"></div>
+
+  <div class="card" id="createFormCard" style="display:none;margin-bottom:1.5rem">
+    <div class="card-header">Create Admin User</div>
+    <form id="createAdminForm">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="fullName">Full Name</label>
+          <input type="text" id="fullName" name="fullName" required maxlength="255" placeholder="Jane Doe">
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" required placeholder="jane@starfashion.com">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="mobile">Mobile</label>
+          <input type="tel" id="mobile" name="mobile" required minlength="10" maxlength="20" placeholder="+923001234567">
+        </div>
+        <div class="form-group">
+          <label for="role">Role</label>
+          <select id="role" name="role" required>
+            <option value="reviewer">Reviewer</option>
+            <option value="manager">Manager</option>
+            <option value="master_admin">Master Admin</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="department">Department</label>
+          <input type="text" id="department" name="department" maxlength="100" placeholder="Operations">
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required minlength="8"
+            placeholder="Min 8 chars, upper, lower, number">
+          <div class="hint">Must include uppercase, lowercase, and a number</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+        <button type="button" class="btn btn-outline" id="cancelCreateBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="createSubmitBtn">Create Admin</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Admin Accounts</div>
+    <div id="adminsList"><div class="spinner"></div></div>
+  </div>
+</div>
+<script>
+const adminsList = document.getElementById('adminsList');
+const createFormCard = document.getElementById('createFormCard');
+
+function roleBadge(role) {
+  if (role === 'master_admin') return '<span class="badge badge-active">MASTER ADMIN</span>';
+  if (role === 'manager') return '<span class="badge badge-approved">MANAGER</span>';
+  return '<span class="badge badge-pending">REVIEWER</span>';
+}
+
+async function loadAdmins() {
+  try {
+    adminsList.innerHTML = '<div class="spinner"></div>';
+    const data = await API.get('/api/admin/admins');
+    const admins = data.admins || [];
+    if (!admins.length) {
+      adminsList.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:1.5rem">No admin accounts yet</p>';
+      return;
+    }
+    adminsList.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Name</th><th>Email</th><th>Mobile</th><th>Role</th><th>Status</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${admins.map(a => `
+          <tr>
+            <td><strong>${esc(a.full_name) || '-'}</strong>${a.department ? `<br><small style="color:var(--text-muted)">${esc(a.department)}</small>` : ''}</td>
+            <td>${esc(a.email)}</td>
+            <td>${esc(a.mobile) || '-'}</td>
+            <td>${roleBadge(a.role)}</td>
+            <td>${statusBadge(a.status)}</td>
+            <td>
+              ${a.status === 'active'
+                ? `<button class="btn btn-sm btn-outline" data-action="suspend" data-id="${esc(a.id)}">Suspend</button>`
+                : `<button class="btn btn-sm btn-success" data-action="activate" data-id="${esc(a.id)}">Activate</button>`}
+            </td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    adminsList.innerHTML = '<p style="text-align:center;color:var(--danger);padding:1.5rem">Failed to load admins</p>';
+    showAlert(err.error?.message || 'Failed to load admins', 'danger');
+  }
+}
+
+adminsList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  btn.disabled = true;
+  try {
+    await API.post(`/api/admin/admins/${id}/${action}`);
+    showAlert(action === 'suspend' ? 'Admin suspended' : 'Admin activated', 'success');
+    await loadAdmins();
+  } catch (err) {
+    showAlert(err.error?.message || 'Action failed', 'danger');
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('showCreateBtn').addEventListener('click', () => {
+  createFormCard.style.display = 'block';
+  document.getElementById('fullName').focus();
+});
+
+document.getElementById('cancelCreateBtn').addEventListener('click', () => {
+  createFormCard.style.display = 'none';
+  document.getElementById('createAdminForm').reset();
+});
+
+document.getElementById('createAdminForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('createSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Creating...';
+  try {
+    const payload = {
+      fullName: document.getElementById('fullName').value.trim(),
+      email: document.getElementById('email').value.trim(),
+      mobile: document.getElementById('mobile').value.trim(),
+      role: document.getElementById('role').value,
+      password: document.getElementById('password').value,
+    };
+    const department = document.getElementById('department').value.trim();
+    if (department) payload.department = department;
+
+    await API.post('/api/admin/admins', payload);
+    showAlert('Admin created successfully', 'success');
+    e.target.reset();
+    createFormCard.style.display = 'none';
+    await loadAdmins();
+  } catch (err) {
+    showAlert(err.error?.message || 'Failed to create admin', 'danger');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Admin';
+  }
+});
+
+loadAdmins();
+</script>
+<%- include('../partials/footer') %>

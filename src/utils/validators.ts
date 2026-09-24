@@ -20,7 +20,7 @@ export const passwordSchema = z
 export const receiptNumberSchema = z.string().min(1).max(100).trim();
 
 export const amountSchema = z
-  .number()
+  .coerce.number()
   .positive()
   .max(99999999.99)
   .transform((val) => Math.round(val * 100) / 100);

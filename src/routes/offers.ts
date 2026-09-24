@@ -14,6 +14,9 @@ const offerSchema = z.object({
     eligibleArticles: z.array(z.string()).optional(),
     eligibleCategories: z.array(z.string()).optional(),
     eligibleTiers: z.array(z.string()).optional(),
+    multiplier: z.number().min(1).optional(),
+    bonusPoints: z.number().min(0).optional(),
+    bonusPercentage: z.number().min(0).max(1000).optional(),
   }).optional(),
   startDate: z.string().transform((s) => new Date(s)),
   endDate: z.string().transform((s) => new Date(s)),
@@ -33,7 +36,7 @@ router.get('/active', authenticate, authorizeCustomer, async (_req: Request, res
   }
 });
 
-router.get('/', authenticate, authorizeAdmin('master_admin'), async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/', authenticate, authorizeAdmin('reviewer', 'manager', 'master_admin'), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const offers = await OfferService.getOffers(true);
     res.json({ offers });
@@ -42,7 +45,7 @@ router.get('/', authenticate, authorizeAdmin('master_admin'), async (_req: Reque
   }
 });
 
-router.get('/:id', authenticate, authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:id', authenticate, authorizeAdmin('reviewer', 'manager', 'master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const offer = await OfferService.getOfferById(req.params.id as string);
     res.json({ offer });

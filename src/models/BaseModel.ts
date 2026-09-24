@@ -1,4 +1,5 @@
 import { db } from '../config/database';
+import { newId } from '../utils/crypto';
 
 export class BaseModel {
   protected static tableName: string;
@@ -18,8 +19,9 @@ export class BaseModel {
   }
 
   static async create(data: Record<string, unknown>) {
-    const [insertId] = await db(this.tableName).insert(data);
-    const id = data.id || insertId;
+    const payload = { id: data.id || newId(), ...data };
+    const [insertId] = await db(this.tableName).insert(payload);
+    const id = payload.id || insertId;
     return this.findById(String(id));
   }
 

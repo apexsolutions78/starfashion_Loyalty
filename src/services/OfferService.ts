@@ -1,6 +1,11 @@
 import { db } from '../config/database';
+import type { Knex } from 'knex';
 import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
+import { newId } from '../utils/crypto';
+import { serializeOffer } from '../utils/serialize';
+
+type Db = Knex | Knex.Transaction;
 
 interface OfferInput {
   name: string;
@@ -11,6 +16,9 @@ interface OfferInput {
     eligibleArticles?: string[];
     eligibleCategories?: string[];
     eligibleTiers?: string[];
+    multiplier?: number;
+    bonusPoints?: number;
+    bonusPercentage?: number;
   };
   startDate: Date;
   endDate: Date;
@@ -26,6 +34,7 @@ export class OfferService {
     const log = createRequestLogger(requestId);
 
     const [offer] = await db('offers').insert({
+      id: newId(),
       name: input.name,
       description: input.description,
       offer_type: input.offerType,
@@ -42,7 +51,7 @@ export class OfferService {
     }).returning('*');
 
     log.info('Offer created', { offerId: offer.id, name: input.name });
-    return { ...offer, conditions: offer.conditions_json ? JSON.parse(offer.conditions_json) : null };
+    return serializeOffer({ ...offer });
   }
 
   static async getOffers(includeInactive: boolean = false): Promise<any[]> {
@@ -51,10 +60,7 @@ export class OfferService {
       query = query.where('is_active', true);
     }
     const offers = await query.orderBy('priority', 'desc');
-    return offers.map((o) => ({
-      ...o,
-      conditions: o.conditions_json ? JSON.parse(o.conditions_json) : null,
-    }));
+    return offers.map((o) => serializeOffer(o as Record<string, any>));
   }
 
   static async getOfferById(id: string): Promise<any> {
@@ -62,7 +68,7 @@ export class OfferService {
     if (!offer) {
       throw createAppError('Offer not found', 404, 'OFFER_NOT_FOUND');
     }
-    return { ...offer, conditions: offer.conditions_json ? JSON.parse(offer.conditions_json) : null };
+    return serializeOffer(offer as Record<string, any>);
   }
 
   static async updateOffer(id: string, input: Partial<OfferInput>, requestId: string): Promise<any> {
@@ -108,6 +114,7 @@ export class OfferService {
     await db('offers').where('id', id).update({ is_active: true });
 
     await db('audit_logs').insert({
+      id: newId(),
       action: 'OFFER_ACTIVATED',
       entity_type: 'offer',
       entity_id: id,
@@ -128,6 +135,7 @@ export class OfferService {
     await db('offers').where('id', id).update({ is_active: false });
 
     await db('audit_logs').insert({
+      id: newId(),
       action: 'OFFER_DEACTIVATED',
       entity_type: 'offer',
       entity_id: id,
@@ -138,38 +146,65 @@ export class OfferService {
     log.info('Offer deactivated', { offerId: id });
   }
 
-  static async getActiveOffers(): Promise<any[]> {
+  static async getActiveOffers(client: Db = db): Promise<any[]> {
     const now = new Date();
-    const offers = await db('offers')
+    const offers = await client('offers')
       .where('is_active', true)
       .where('start_date', '<=', now)
       .where('end_date', '>=', now)
       .orderBy('priority', 'desc');
 
-    return offers.map((o) => ({
-      ...o,
-      conditions: o.conditions_json ? JSON.parse(o.conditions_json) : null,
-    }));
+    return offers.map((o) => serializeOffer(o as Record<string, any>));
   }
 
-  static async checkOfferUsage(offerId: string, customerId: string): Promise<{ canUse: boolean; usesRemaining: number }> {
-    const offer = await db('offers').where('id', offerId).first();
+  static async checkOfferUsage(
+    offerId: string,
+    customerId: string,
+    client: Db = db,
+  ): Promise<{ canUse: boolean; usesRemaining: number }> {
+    const offer = await client('offers').where('id', offerId).first();
     if (!offer) {
       throw createAppError('Offer not found', 404, 'OFFER_NOT_FOUND');
     }
 
-    const customerUses = await db('points_ledger')
+    // Portable across SQLite + MySQL (avoids MySQL-only JSON_EXTRACT)
+    const rows = await client('points_ledger')
       .where('customer_id', customerId)
-      .whereRaw("JSON_EXTRACT(offer_snapshot, '$.id') = ?", [offerId])
-      .count('* as uses')
-      .first();
+      .whereNotNull('offer_snapshot')
+      .select('offer_snapshot');
 
-    const uses = Number(customerUses?.uses || 0);
-    const usesRemaining = (offer.max_uses_per_customer || 1) - uses;
+    let uses = 0;
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(String(row.offer_snapshot));
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        if (list.some((o: any) => o && o.id === offerId)) {
+          uses += 1;
+        }
+      } catch {
+        // ignore malformed snapshots
+      }
+    }
+
+    const maxUses = offer.max_uses_per_customer == null ? 1 : Number(offer.max_uses_per_customer);
+    const usesRemaining = maxUses - uses;
 
     return {
       canUse: usesRemaining > 0,
       usesRemaining: Math.max(0, usesRemaining),
     };
+  }
+
+  static async recordOfferUse(
+    offerId: string,
+    client: Db = db,
+  ): Promise<boolean> {
+    const updated = await client('offers')
+      .where('id', offerId)
+      .where(function () {
+        this.whereNull('global_max_uses').orWhereRaw('current_global_uses < global_max_uses');
+      })
+      .increment('current_global_uses', 1);
+    return Number(updated) > 0;
   }
 }
