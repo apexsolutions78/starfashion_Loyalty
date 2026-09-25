@@ -22,7 +22,7 @@ interface ClaimWithCustomer {
   purchaseDate: string;
   submittedAmount: number;
   submittedArticles: string[] | null;
-  receiptImagePath: string;
+  imageAvailable: boolean;
   status: string;
   approvedAmount: number | null;
   eligibleAmount: number | null;
@@ -36,19 +36,48 @@ interface ClaimWithCustomer {
   customerMobile: string;
 }
 
+export function parseSubmittedArticles(raw: unknown): string[] {
+  if (raw == null || raw === '') return [];
+  if (Array.isArray(raw)) return raw.map(String).filter((v) => v.trim() !== '');
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (Array.isArray(parsed)) return parsed.map(String).filter((v) => v.trim() !== '');
+  } catch {
+    // fall through to comma-split
+  }
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const CLAIM_STATUSES = [
+  'SUBMITTED',
+  'PENDING_REVIEW',
+  'REQUEST_CLEARER_IMAGE',
+  'APPROVED',
+  'REJECTED',
+  'REVERSED',
+] as const;
+
 export class ReviewService {
   static async getPendingClaims(options: {
     limit?: number;
     offset?: number;
     search?: string;
+    status?: string;
   } = {}): Promise<{ claims: ClaimWithCustomer[]; total: number }> {
     const limit = options.limit || 20;
     const offset = options.offset || 0;
+    const status =
+      options.status && (CLAIM_STATUSES as readonly string[]).includes(options.status)
+        ? options.status
+        : 'PENDING_REVIEW';
 
     let query = db('receipt_claims')
       .join('users', 'receipt_claims.customer_id', 'users.id')
       .leftJoin('customer_profiles', 'users.id', 'customer_profiles.user_id')
-      .where('receipt_claims.status', 'PENDING_REVIEW')
+      .where('receipt_claims.status', status)
       .select(
         'receipt_claims.*',
         'users.email as customerEmail',
@@ -59,7 +88,7 @@ export class ReviewService {
     let countQuery = db('receipt_claims')
       .join('users', 'receipt_claims.customer_id', 'users.id')
       .leftJoin('customer_profiles', 'users.id', 'customer_profiles.user_id')
-      .where('receipt_claims.status', 'PENDING_REVIEW');
+      .where('receipt_claims.status', status);
 
     if (options.search) {
       const searchTerm = `%${options.search}%`;
@@ -142,11 +171,28 @@ export class ReviewService {
       throw createAppError('Eligible amount cannot exceed submitted amount', 400, 'INVALID_AMOUNT');
     }
 
-    const pointsCalc = await PointsEngineService.calculatePoints(decision.eligibleAmount, {
-      customerId: claim.customer_id,
-    });
-
     await db.transaction(async (trx) => {
+      // Lock the claim row so two concurrent approvals cannot both pass the
+      // status guard (MySQL: FOR UPDATE; SQLite: knex omits it, writer lock applies).
+      const locked = await trx('receipt_claims')
+        .where('id', claimId)
+        .where('status', 'PENDING_REVIEW')
+        .forUpdate()
+        .first();
+
+      if (!locked) {
+        throw createAppError('Claim no longer pending review', 409, 'CLAIM_NOT_PENDING');
+      }
+
+      const pointsCalc = await PointsEngineService.calculatePoints(
+        decision.eligibleAmount,
+        {
+          customerId: claim.customer_id,
+          articles: parseSubmittedArticles(claim.submitted_articles),
+        },
+        trx,
+      );
+
       const updated = await trx('receipt_claims')
         .where('id', claimId)
         .where('status', 'PENDING_REVIEW')
@@ -158,6 +204,7 @@ export class ReviewService {
           reviewed_by: reviewerId,
           reviewed_at: new Date(),
           updated_at: new Date(),
+          rule_snapshot: pointsCalc.ruleSnapshot ? JSON.stringify(pointsCalc.ruleSnapshot) : null,
           offer_snapshot:
             pointsCalc.appliedOffers.length > 0 ? JSON.stringify(pointsCalc.appliedOffers) : null,
         });
@@ -176,6 +223,8 @@ export class ReviewService {
           approvedAmount: decision.approvedAmount,
           eligibleAmount: decision.eligibleAmount,
           reviewerNotes: decision.reviewerNotes,
+          basePoints: pointsCalc.basePoints,
+          offerBonus: pointsCalc.offerBonus,
         }),
       });
 
@@ -183,7 +232,8 @@ export class ReviewService {
         await PointsEngineService.creditPoints(
           claim.customer_id,
           claimId,
-          pointsCalc.totalPoints,
+          pointsCalc.basePoints,
+          pointsCalc.offerBonus,
           pointsCalc.ruleSnapshot,
           pointsCalc.appliedOffers,
           reviewerId,
@@ -326,6 +376,94 @@ export class ReviewService {
       );
 
       log.info('Clearer image requested', { claimId, reviewerId });
+    });
+  }
+
+  /**
+   * Manager/Master-admin correction path: reverses the earn entries for an
+   * APPROVED claim and marks it REVERSED. The claim is never deleted.
+   */
+  static async reverseClaim(
+    claimId: string,
+    actorId: string,
+    reason: string,
+    requestId: string,
+  ): Promise<{ entriesReversed: number }> {
+    const log = createRequestLogger(requestId);
+
+    if (!reason || reason.trim().length === 0) {
+      throw createAppError('Reversal reason is required', 400, 'REASON_REQUIRED');
+    }
+
+    const claim = await db('receipt_claims').where('id', claimId).first();
+
+    if (!claim) {
+      throw createAppError('Claim not found', 404, 'CLAIM_NOT_FOUND');
+    }
+
+    if (claim.status === 'REVERSED') {
+      throw createAppError('Claim is already reversed', 409, 'ALREADY_REVERSED');
+    }
+
+    if (claim.status !== 'APPROVED') {
+      throw createAppError('Only approved claims can be reversed', 409, 'CLAIM_NOT_APPROVED');
+    }
+
+    return db.transaction(async (trx) => {
+      const locked = await trx('receipt_claims')
+        .where('id', claimId)
+        .where('status', 'APPROVED')
+        .forUpdate()
+        .first();
+
+      if (!locked) {
+        throw createAppError('Claim is no longer approved', 409, 'CLAIM_NOT_APPROVED');
+      }
+
+      const entriesReversed = await PointsEngineService.reversePoints(
+        claimId,
+        reason.trim(),
+        actorId,
+        requestId,
+        trx,
+      );
+
+      const updated = await trx('receipt_claims')
+        .where('id', claimId)
+        .where('status', 'APPROVED')
+        .update({
+          status: 'REVERSED',
+          reviewer_notes: reason.trim(),
+          reviewed_by: actorId,
+          reviewed_at: new Date(),
+          updated_at: new Date(),
+        });
+
+      if (!updated) {
+        throw createAppError('Claim is no longer approved', 409, 'CLAIM_NOT_APPROVED');
+      }
+
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: actorId,
+        action: 'CLAIM_REVERSED',
+        entity_type: 'receipt_claim',
+        entity_id: claimId,
+        old_values: JSON.stringify({ status: 'APPROVED' }),
+        new_values: JSON.stringify({ status: 'REVERSED', reason: reason.trim(), entriesReversed }),
+      });
+
+      await ClaimService.createNotification(
+        claim.customer_id,
+        'claim_reversed',
+        'Claim Reversed',
+        `Receipt ${claim.receipt_number} was reversed. Reason: ${reason.trim()}`,
+        { claimId, reason: reason.trim() },
+        trx,
+      );
+
+      log.info('Claim reversed', { claimId, actorId, entriesReversed });
+      return { entriesReversed };
     });
   }
 

@@ -5,6 +5,10 @@ A receipt-verified loyalty web application for Star Fashion, a Pakistani retail 
 ## Features
 
 - Customer registration and authentication
+- Self-service password change for customers and admins (`/profile`, `/admin/profile`)
+- Password changes and resets write an audit entry and sign the account out of every other session
+- Managers can reset a customer's password from `/admin/customers`
+- Point expiry driven by the loyalty rule's `pointExpiryDays` (hourly job, negative `EXPIRY` entries)
 - Receipt upload and verification
 - Points earning and redemption
 - Admin review workflow
@@ -96,6 +100,7 @@ npm start
 - `POST /api/admin/claims/:id/approve` - Approve claim
 - `POST /api/admin/claims/:id/reject` - Reject claim
 - `POST /api/admin/claims/:id/request-image` - Request clearer image
+- `POST /api/admin/customers/:id/reset-password` - Reset a customer's password (manager+)
 
 ### Rules & Offers
 - `GET /api/admin/rules` - List loyalty rules

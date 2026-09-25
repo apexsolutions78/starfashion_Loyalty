@@ -33,8 +33,9 @@ export class OfferService {
   static async createOffer(input: OfferInput, createdBy: string, requestId: string): Promise<any> {
     const log = createRequestLogger(requestId);
 
-    const [offer] = await db('offers').insert({
-      id: newId(),
+    const offerId = newId();
+    await db('offers').insert({
+      id: offerId,
       name: input.name,
       description: input.description,
       offer_type: input.offerType,
@@ -48,9 +49,12 @@ export class OfferService {
       stackable: input.stackable || false,
       terms: input.terms,
       created_by: createdBy,
-    }).returning('*');
+    });
 
-    log.info('Offer created', { offerId: offer.id, name: input.name });
+    // Re-select instead of `.returning('*')` — MySQL ignores RETURNING.
+    const offer = await db('offers').where('id', offerId).first();
+
+    log.info('Offer created', { offerId, name: input.name });
     return serializeOffer({ ...offer });
   }
 

@@ -87,8 +87,23 @@ export class RedemptionService {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24);
 
-    const [voucher] = await db.transaction(async (trx) => {
-      // Re-check balance inside the transaction to prevent concurrent overspend
+    const voucherId = newId();
+
+    const voucher = await db.transaction(async (trx) => {
+      // Serialize concurrent redemptions for the same customer: on MySQL the
+      // `users` row lock (FOR UPDATE) makes the second transaction wait and then
+      // observe the first one's debit; SQLite omits FOR UPDATE but knex's
+      // better-sqlite3 client is single-connection and write transactions are
+      // already serialized.
+      const [lockedCustomer] = await trx('users')
+        .where('id', customerId)
+        .select('id')
+        .forUpdate();
+      if (!lockedCustomer) {
+        throw createAppError('Customer not found', 404, 'CUSTOMER_NOT_FOUND');
+      }
+
+      // Re-check balance inside the locked transaction to prevent concurrent overspend
       const balanceRow = await trx('points_ledger')
         .where('customer_id', customerId)
         .select(trx.raw('COALESCE(SUM(points), 0) as balance'))
@@ -98,15 +113,21 @@ export class RedemptionService {
         throw createAppError('Insufficient points balance', 400, 'INSUFFICIENT_BALANCE');
       }
 
-      const [v] = await trx('redemption_vouchers').insert({
-        id: newId(),
+      await trx('redemption_vouchers').insert({
+        id: voucherId,
         customer_id: customerId,
         voucher_code: voucherCode,
         points_redeemed: pointsToRedeem,
         discount_amount: quote.discountAmount,
         status: 'ACTIVE',
         expires_at: expiresAt,
-      }).returning('*');
+      });
+
+      // Re-select instead of `.returning('*')` — MySQL ignores RETURNING.
+      const v = await trx('redemption_vouchers').where('id', voucherId).first();
+      if (!v) {
+        throw createAppError('Failed to create voucher', 500, 'VOUCHER_INSERT_FAILED');
+      }
 
       const idempotencyKey = `redemption-${v.id}`;
 
@@ -142,7 +163,7 @@ export class RedemptionService {
         }),
       });
 
-      return [v];
+      return v;
     });
 
     log.info('Voucher created', {
@@ -328,6 +349,11 @@ export class RedemptionService {
     const log = createRequestLogger(requestId);
     const now = new Date();
 
+    // Restored points are a fresh credit: they pick up the active rule's
+    // expiry window instead of living forever after a voucher lapses.
+    const activeRule = await PointsEngineService.getActiveRule();
+    const expiresAt = PointsEngineService.expiryDateFor(activeRule?.rules?.pointExpiryDays, now);
+
     const count = await db.transaction(async (trx) => {
       const due = await trx('redemption_vouchers')
         .where('status', 'ACTIVE')
@@ -356,6 +382,7 @@ export class RedemptionService {
             points: voucher.points_redeemed,
             idempotency_key: idempotencyKey,
             created_by: voucher.customer_id,
+            expires_at: expiresAt,
             reason: `Voucher ${voucher.voucher_code} expired`,
             reversal_reference: voucher.ledger_entry_id,
           });

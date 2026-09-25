@@ -18,12 +18,37 @@
         <select id="type">
           <option value="">All types</option>
           <option value="PURCHASE_EARN">Purchase Earn</option>
+          <option value="OFFER_BONUS">Offer Bonus</option>
           <option value="REDEMPTION">Redemption</option>
           <option value="CORRECTION_REVERSAL">Correction Reversal</option>
+          <option value="MANUAL_CREDIT">Manual Credit</option>
+          <option value="MANUAL_DEBIT">Manual Debit</option>
+          <option value="EXPIRY">Expiry</option>
         </select>
       </div>
       <button type="submit" class="btn btn-primary">Filter</button>
       <button type="button" class="btn btn-outline" id="resetBtn">Reset</button>
+    </form>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-header">Manual Adjustment (Manager / Master Admin)</div>
+    <form id="adjustmentForm">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="adjCustomer">Customer</label>
+          <select id="adjCustomer" required><option value="">Loading customers…</option></select>
+        </div>
+        <div class="form-group">
+          <label for="adjPoints">Points (negative = debit)</label>
+          <input type="number" id="adjPoints" step="1" required placeholder="e.g. 50 or -50">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="adjReason">Reason *</label>
+        <input type="text" id="adjReason" required maxlength="500" placeholder="Appears in the audit log">
+      </div>
+      <button type="submit" class="btn btn-primary" id="adjSubmitBtn">Apply Adjustment</button>
     </form>
   </div>
 
@@ -37,8 +62,12 @@ const emptyMsg = (msg) => `<p style="text-align:center;color:var(--text-muted);p
 
 function typeBadge(type) {
   if (type === 'PURCHASE_EARN') return '<span class="badge badge-approved">EARN</span>';
+  if (type === 'OFFER_BONUS') return '<span class="badge badge-active">BONUS</span>';
   if (type === 'REDEMPTION') return '<span class="badge badge-pending">REDEEM</span>';
   if (type === 'CORRECTION_REVERSAL') return '<span class="badge badge-rejected">REVERSAL</span>';
+  if (type === 'MANUAL_CREDIT') return '<span class="badge badge-active">CREDIT</span>';
+  if (type === 'MANUAL_DEBIT') return '<span class="badge badge-rejected">DEBIT</span>';
+  if (type === 'EXPIRY') return '<span class="badge badge-used">EXPIRY</span>';
   return `<span class="badge badge-used">${String(type || '').replace(/_/g, ' ')}</span>`;
 }
 
@@ -113,6 +142,46 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   load();
 });
 
+async function loadAdjustmentCustomers() {
+  try {
+    const data = await API.get('/api/admin/customers?limit=100');
+    const rows = data.customers || [];
+    document.getElementById('adjCustomer').innerHTML = rows.length
+      ? '<option value="">Select a customer…</option>' + rows.map(c =>
+          `<option value="${esc(c.id)}">${esc(c.full_name || c.email)} (${esc(c.email)})</option>`).join('')
+      : '<option value="">No customers</option>';
+  } catch {
+    document.getElementById('adjCustomer').innerHTML = '<option value="">Unavailable</option>';
+  }
+}
+
+document.getElementById('adjustmentForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('adjSubmitBtn');
+  const points = parseInt(document.getElementById('adjPoints').value, 10);
+  if (!Number.isInteger(points) || points === 0) {
+    showAlert('Points must be a non-zero whole number', 'danger');
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await API.post('/api/admin/adjustments', {
+      customerId: document.getElementById('adjCustomer').value,
+      points,
+      reason: document.getElementById('adjReason').value.trim(),
+      idempotencyKey: `adj-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    });
+    showAlert('Adjustment applied', 'success');
+    e.target.reset();
+    await load();
+  } catch (err) {
+    showAlert(err.error?.message || 'Adjustment failed', 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadAdjustmentCustomers();
 load();
 </script>
 <%- include('../partials/footer') %>

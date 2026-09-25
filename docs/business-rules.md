@@ -34,6 +34,10 @@
    - Configurable expiry period
    - Expiry creates negative ledger entry
    - Expired points cannot be redeemed
+   - Implemented: `points_ledger.expires_at` is stamped from the active rule's
+     `pointExpiryDays` at credit time; the hourly point-expiry job writes negative
+     `EXPIRY` rows and balance = `SUM(points)`, so expired points drop out of the
+     balance automatically. `pointExpiryDays: null` means points never expire.
 
 3. **Ledger**
    - Append-only ledger (never deleted)

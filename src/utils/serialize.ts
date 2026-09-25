@@ -41,7 +41,9 @@ export function serializeClaim(row: Record<string, any>): Record<string, any> {
       row.submittedArticles !== undefined
         ? parseArticles(row.submittedArticles)
         : parseArticles(row.submitted_articles),
-    receiptImagePath: row.receiptImagePath ?? row.receipt_image_path,
+    // Never expose the server filesystem path — images are served only through
+    // authorization-checked endpoints (GET /api/claims/:id/image, GET /api/review/claims/:id/image).
+    imageAvailable: Boolean(row.receiptImagePath ?? row.receipt_image_path),
     status: row.status,
     approvedAmount:
       row.approvedAmount != null

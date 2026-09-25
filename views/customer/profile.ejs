@@ -1,0 +1,46 @@
+<%- include('../partials/customer-header', { active: 'profile' }) %>
+<div class="container content">
+  <div class="page-header">
+    <h1>My Profile</h1>
+  </div>
+  <div id="alert"></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <h2>Account Details</h2>
+      </div>
+      <div id="profileDetails"><div class="spinner"></div></div>
+    </div>
+
+    <%- include('../partials/change-password') %>
+  </div>
+</div>
+<script>
+async function loadProfile() {
+  const target = document.getElementById('profileDetails');
+  try {
+    const data = await API.get('/api/auth/me');
+    const u = data?.user || {};
+    const p = u.profile || {};
+    const row = (label, value) => `
+      <div style="display:flex;justify-content:space-between;gap:1rem;padding:0.75rem 0;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text-muted)">${esc(label)}</span>
+        <strong style="text-align:right;word-break:break-word">${value || '-'}</strong>
+      </div>`;
+    target.innerHTML = [
+      p.fullName ? row('Name', esc(p.fullName)) : '',
+      row('Email', esc(u.email || '') + (u.emailVerified ? ' <small style="color:var(--success)">(verified)</small>' : ' <small style="color:var(--text-muted)">(unverified)</small>')),
+      row('Mobile', esc(u.mobile || '') + (u.mobileVerified ? ' <small style="color:var(--success)">(verified)</small>' : ' <small style="color:var(--text-muted)">(unverified)</small>')),
+      row('Role', esc(String(u.role || '').replace(/_/g, ' '))),
+      row('Status', statusBadge(u.status || 'ACTIVE')),
+    ].join('');
+  } catch (err) {
+    const msg = err?.error?.message || 'Could not load your profile';
+    target.innerHTML = `<p style="color:var(--text-muted);padding:1rem 0">${esc(msg)}</p>`;
+    showAlert(msg, 'danger');
+  }
+}
+loadProfile();
+</script>
+<%- include('../partials/footer') %>

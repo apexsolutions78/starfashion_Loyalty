@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { OfferService } from '../services/OfferService';
 import { authenticate, authorizeAdmin, authorizeCustomer } from '../middleware/auth';
+import { uuidSchema } from '../utils/validators';
 
 const router = Router();
 
@@ -47,7 +48,7 @@ router.get('/', authenticate, authorizeAdmin('reviewer', 'manager', 'master_admi
 
 router.get('/:id', authenticate, authorizeAdmin('reviewer', 'manager', 'master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const offer = await OfferService.getOfferById(req.params.id as string);
+    const offer = await OfferService.getOfferById(uuidSchema.parse(req.params.id));
     res.json({ offer });
   } catch (error) {
     next(error);
@@ -67,7 +68,7 @@ router.post('/', authenticate, authorizeAdmin('master_admin'), async (req: Reque
 router.patch('/:id', authenticate, authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = offerSchema.partial().parse(req.body);
-    const offer = await OfferService.updateOffer(req.params.id as string, input, req.requestId);
+    const offer = await OfferService.updateOffer(uuidSchema.parse(req.params.id), input, req.requestId);
     res.json({ message: 'Offer updated', offer });
   } catch (error) {
     next(error);
@@ -76,7 +77,7 @@ router.patch('/:id', authenticate, authorizeAdmin('master_admin'), async (req: R
 
 router.post('/:id/activate', authenticate, authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await OfferService.activateOffer(req.params.id as string, req.requestId);
+    await OfferService.activateOffer(uuidSchema.parse(req.params.id), req.requestId);
     res.json({ message: 'Offer activated' });
   } catch (error) {
     next(error);
@@ -85,7 +86,7 @@ router.post('/:id/activate', authenticate, authorizeAdmin('master_admin'), async
 
 router.post('/:id/deactivate', authenticate, authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await OfferService.deactivateOffer(req.params.id as string, req.requestId);
+    await OfferService.deactivateOffer(uuidSchema.parse(req.params.id), req.requestId);
     res.json({ message: 'Offer deactivated' });
   } catch (error) {
     next(error);

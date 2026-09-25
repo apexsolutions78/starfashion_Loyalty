@@ -5,12 +5,21 @@ import { AuthService } from '../services/AuthService';
 import { authenticate, authorizeCustomer } from '../middleware/auth';
 import { issueCsrfToken } from '../middleware/csrf';
 import { env } from '../config';
+import { passwordSchema } from '../utils/validators';
+import { AuthContext } from '../services/AuthService';
 
 const router = Router();
 
+/** Audit metadata for password flows: who from, from where, on which session. */
+const authContext = (req: Request): AuthContext => ({
+  ip: req.ip,
+  userAgent: req.get('user-agent'),
+  sessionId: req.sessionID,
+});
+
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req, res) => {
@@ -23,12 +32,7 @@ const authLimiter = rateLimit({
 const registerSchema = z.object({
   email: z.string().email().toLowerCase().trim(),
   mobile: z.string().min(10).max(20).regex(/^\+?[0-9\s\-()]+$/),
-  password: z
-    .string()
-    .min(8)
-    .regex(/[a-z]/)
-    .regex(/[A-Z]/)
-    .regex(/[0-9]/),
+  password: passwordSchema,
   fullName: z.string().min(2).max(255),
   marketingConsent: z.boolean().optional().default(false),
   loyaltyConsent: z.boolean().refine((val) => val === true, {
@@ -52,12 +56,7 @@ const resendVerificationSchema = z.object({
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z
-    .string()
-    .min(8)
-    .regex(/[a-z]/)
-    .regex(/[A-Z]/)
-    .regex(/[0-9]/),
+  newPassword: passwordSchema,
 });
 
 const forgotPasswordSchema = z.object({
@@ -66,12 +65,7 @@ const forgotPasswordSchema = z.object({
 
 const resetPasswordSchema = z.object({
   token: z.string().min(1),
-  newPassword: z
-    .string()
-    .min(8)
-    .regex(/[a-z]/)
-    .regex(/[A-Z]/)
-    .regex(/[0-9]/),
+  newPassword: passwordSchema,
 });
 
 router.post('/register', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
@@ -172,7 +166,7 @@ router.post('/forgot-password', authLimiter, async (req: Request, res: Response,
 router.post('/reset-password', authLimiter, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { token, newPassword } = resetPasswordSchema.parse(req.body);
-    await AuthService.resetPassword(token, newPassword, req.requestId);
+    await AuthService.resetPassword(token, newPassword, req.requestId, authContext(req));
     res.json({ message: 'Password reset successful' });
   } catch (error) {
     next(error);
@@ -182,7 +176,13 @@ router.post('/reset-password', authLimiter, async (req: Request, res: Response, 
 router.post('/change-password', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
-    await AuthService.changePassword(req.user!.id, currentPassword, newPassword, req.requestId);
+    await AuthService.changePassword(
+      req.user!.id,
+      currentPassword,
+      newPassword,
+      req.requestId,
+      authContext(req),
+    );
     res.json({ message: 'Password changed successfully' });
   } catch (error) {
     next(error);

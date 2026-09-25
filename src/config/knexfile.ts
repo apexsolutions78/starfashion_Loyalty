@@ -30,6 +30,23 @@ const config: { [key: string]: Knex.Config } = {
       extension: 'ts',
     },
   },
+  test: {
+    client: 'better-sqlite3',
+    connection: {
+      filename: path.join(rootDir, 'data', 'test-loyalty.db'),
+    },
+    useNullAsDefault: true,
+    pool: {
+      afterCreate: (conn: any, done: (err?: Error) => void) => {
+        conn.pragma('foreign_keys = ON');
+        done();
+      },
+    },
+    migrations: {
+      directory: path.join(rootDir, 'migrations'),
+      extension: 'ts',
+    },
+  },
   production: {
     client: 'mysql2',
     connection: {

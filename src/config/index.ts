@@ -38,6 +38,7 @@ const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(900000),
   RATE_LIMIT_MAX: z.coerce.number().default(2000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(20),
 
   RECEIPT_NUMBER_REGEX: z.string().default('^\\d{2}-\\d{2}-\\d{4}-\\d{2}$'),
 });

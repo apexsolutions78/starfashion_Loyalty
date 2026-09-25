@@ -57,15 +57,23 @@ async function load() {
 
     document.getElementById('customersList').innerHTML = `
       <table class="table">
-        <thead><tr><th>Name</th><th>Contact</th><th>Status</th><th>Points</th><th>Claims</th><th>Joined</th></tr></thead>
+        <thead><tr><th>Name</th><th>Contact</th><th>Tier</th><th>Status</th><th>Points</th><th>Claims</th><th>Joined</th><th>Actions</th></tr></thead>
         <tbody>${data.customers.map(c => `
           <tr>
             <td><strong>${esc(c.full_name) || '-'}</strong></td>
             <td>${esc(c.email)}<br><small style="color:var(--text-muted)">${esc(c.mobile) || '-'}</small></td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline" data-action="tier" data-id="${esc(c.id)}"
+                data-tier="${esc(c.tier || 'standard')}">${esc(c.tier || 'standard')}</button>
+            </td>
             <td>${statusBadge(c.status)}</td>
             <td><strong>${Number(c.totalPoints || 0)}</strong></td>
             <td>${Number(c.approvedClaims || 0)}/${Number(c.claimCount || 0)} approved</td>
             <td>${formatDate(c.created_at)}</td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline" data-action="resetpw" data-id="${esc(c.id)}"
+                data-email="${esc(c.email)}">Reset password</button>
+            </td>
           </tr>
         `).join('')}</tbody>
       </table>`;
@@ -74,6 +82,50 @@ async function load() {
     showAlert(err.error?.message || 'Failed to load customers', 'danger');
   }
 }
+
+document.getElementById('customersList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+
+  if (btn.dataset.action === 'tier') {
+    const next = window.prompt('Set customer tier (e.g. standard, gold, platinum):', btn.dataset.tier || 'standard');
+    if (next == null || !next.trim() || next.trim() === (btn.dataset.tier || 'standard')) return;
+    btn.disabled = true;
+    try {
+      await API.patch(`/api/admin/customers/${btn.dataset.id}/tier`, { tier: next.trim() });
+      showAlert('Tier updated', 'success');
+      await load();
+    } catch (err) {
+      showAlert(err.error?.message || 'Failed to update tier', 'danger');
+      btn.disabled = false;
+    }
+    return;
+  }
+
+  if (btn.dataset.action === 'resetpw') {
+    const email = btn.dataset.email;
+    const next = window.prompt(
+      `Enter a new password for ${email}\n8+ characters with an uppercase letter, a lowercase letter and a number.`,
+      '',
+    );
+    if (next == null || !next.trim()) return;
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,128}$/.test(next.trim())) {
+      showAlert('Password must be 8+ characters with uppercase, lowercase and a number.', 'danger');
+      return;
+    }
+    if (!window.confirm(`Reset the password for ${email}?\nAll of their sessions will be signed out.`)) return;
+
+    btn.disabled = true;
+    try {
+      await API.post(`/api/admin/customers/${btn.dataset.id}/reset-password`, { newPassword: next.trim() });
+      showAlert(`Password reset for ${email}. Share the new password with them directly.`, 'success');
+    } catch (err) {
+      showAlert(err.error?.message || 'Failed to reset password', 'danger');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+});
 
 document.getElementById('searchForm').addEventListener('submit', (e) => {
   e.preventDefault();

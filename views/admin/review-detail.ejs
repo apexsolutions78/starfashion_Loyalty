@@ -18,6 +18,7 @@
         <p style="margin:0.4rem 0"><strong>Submitted Amount:</strong> <span id="submittedAmount"></span></p>
         <p style="margin:0.4rem 0"><strong>Articles:</strong> <span id="articles"></span></p>
         <p style="margin:0.4rem 0"><strong>Submitted:</strong> <span id="createdAt"></span></p>
+        <p style="margin:0.4rem 0"><strong>Status:</strong> <span id="claimStatus"></span></p>
       </div>
 
       <div class="card">
@@ -56,6 +57,19 @@
           </div>
         </form>
       </div>
+
+      <div class="card" id="reverseCard" style="display:none">
+        <div class="card-header">Reversal (Manager / Master Admin)</div>
+        <p style="color:var(--text-muted);margin:0 0 0.75rem">
+          Reversing writes compensating ledger entries for the base earn and any offer bonus.
+          The claim is never deleted.
+        </p>
+        <div class="form-group">
+          <label for="reversalReason">Reason *</label>
+          <textarea id="reversalReason" rows="2" placeholder="Required — appears in the audit log"></textarea>
+        </div>
+        <button type="button" class="btn btn-danger btn-block" id="reverseBtn">Reverse Claim</button>
+      </div>
     </div>
   </div>
 </div>
@@ -75,6 +89,10 @@ async function loadClaim() {
       : (c.submittedArticles || '-');
     document.getElementById('articles').textContent = articles;
     document.getElementById('createdAt').textContent = formatDateTime(c.createdAt);
+    document.getElementById('claimStatus').innerHTML = statusBadge(c.status);
+    const canDecide = c.status === 'PENDING_REVIEW';
+    document.getElementById('decisionForm').style.display = canDecide ? 'block' : 'none';
+    document.getElementById('reverseCard').style.display = c.status === 'APPROVED' ? 'block' : 'none';
     document.getElementById('customerName').textContent = c.customerName;
     document.getElementById('customerEmail').textContent = c.customerEmail;
     document.getElementById('customerMobile').textContent = c.customerMobile;
@@ -155,6 +173,25 @@ async function requestImage() {
     showAlert(err.error?.message || 'Failed', 'danger');
   }
 }
+
+document.getElementById('reverseBtn').addEventListener('click', async () => {
+  const reason = document.getElementById('reversalReason').value.trim();
+  if (!reason) {
+    showAlert('Reversal reason is required', 'danger');
+    return;
+  }
+  if (!confirm('Reverse this approved claim? Points will be removed via compensating ledger entries.')) return;
+  const btn = document.getElementById('reverseBtn');
+  btn.disabled = true;
+  try {
+    const result = await API.post(`/api/admin/claims/${claimId}/reverse`, { reason });
+    showAlert(`Claim reversed (${result.entriesReversed} ledger entries)`, 'success');
+    setTimeout(() => window.location.href = '/admin/review', 1500);
+  } catch (err) {
+    showAlert(err.error?.message || 'Reversal failed', 'danger');
+    btn.disabled = false;
+  }
+});
 
 loadClaim();
 </script>

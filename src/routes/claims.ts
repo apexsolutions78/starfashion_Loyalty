@@ -6,7 +6,7 @@ import { authenticate, authorizeCustomer } from '../middleware/auth';
 import { uploadReceipt, handleUploadError } from '../middleware/upload';
 import { createAppError } from '../middleware/errorHandler';
 import { sanitizeUploadedImage } from '../utils/imageSanitizer';
-import { amountSchema } from '../utils/validators';
+import { amountSchema, uuidSchema } from '../utils/validators';
 
 const router = Router();
 
@@ -131,7 +131,7 @@ router.get('/notifications', async (req: Request, res: Response, next: NextFunct
 
 router.patch('/notifications/:id/read', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const notificationId = req.params.id as string;
+    const notificationId = uuidSchema.parse(req.params.id);
     await ClaimService.markNotificationRead(notificationId, req.user!.id);
     res.json({ message: 'Notification marked as read' });
   } catch (error) {
@@ -150,9 +150,19 @@ router.post('/notifications/read-all', async (req: Request, res: Response, next:
 
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const claimId = req.params.id as string;
+    const claimId = uuidSchema.parse(req.params.id);
     const claim = await ClaimService.getClaimById(claimId, req.user!.id);
     res.json({ claim });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/:id/image', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const claimId = uuidSchema.parse(req.params.id);
+    const imagePath = await ClaimService.getOwnedImagePath(claimId, req.user!.id);
+    res.sendFile(imagePath);
   } catch (error) {
     next(error);
   }
@@ -187,7 +197,7 @@ router.post('/:id/resubmit', (req: Request, res: Response, next: NextFunction) =
       throw error;
     }
 
-    const claimId = req.params.id as string;
+    const claimId = uuidSchema.parse(req.params.id);
     try {
       const claim = await ClaimService.resubmitClaim(
         claimId,

@@ -2,20 +2,20 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AdminService } from '../services/AdminService';
 import { ReportsService } from '../services/ReportsService';
+import { ReviewService } from '../services/ReviewService';
+import { PointsEngineService } from '../services/PointsEngineService';
+import { ArticleCategoryService } from '../services/ArticleCategoryService';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
 import { db } from '../config/database';
+import { passwordSchema, uuidSchema } from '../utils/validators';
+import { AuthService } from '../services/AuthService';
 
 const router = Router();
 
 const createAdminSchema = z.object({
   email: z.string().email().toLowerCase().trim(),
   mobile: z.string().min(10).max(20),
-  password: z
-    .string()
-    .min(8)
-    .regex(/[a-z]/)
-    .regex(/[A-Z]/)
-    .regex(/[0-9]/),
+  password: passwordSchema,
   fullName: z.string().min(2).max(255),
   role: z.enum(['reviewer', 'manager', 'master_admin']),
   department: z.string().max(100).optional(),
@@ -23,6 +23,33 @@ const createAdminSchema = z.object({
 
 const updateRoleSchema = z.object({
   role: z.enum(['reviewer', 'manager', 'master_admin']),
+});
+
+const reverseClaimSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+const adjustmentSchema = z.object({
+  customerId: z.string().min(1).max(36),
+  points: z.number().int(),
+  reason: z.string().min(1).max(500),
+  idempotencyKey: z.string().min(8).max(255).optional(),
+});
+
+const articleCategorySchema = z.object({
+  category: z.string().min(1).max(100),
+  articlePrefix: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
+});
+
+const updateArticleCategorySchema = articleCategorySchema.partial();
+
+const tierSchema = z.object({
+  tier: z.string().min(1).max(50),
+});
+
+const resetCustomerPasswordSchema = z.object({
+  newPassword: passwordSchema,
 });
 
 router.use(authenticate);
@@ -76,6 +103,7 @@ router.get('/customers', async (req: Request, res: Response, next: NextFunction)
         'users.mobile_verified',
         'users.created_at',
         'customer_profiles.full_name',
+        'customer_profiles.tier',
         db.raw(
           '(SELECT COALESCE(SUM(points), 0) FROM points_ledger WHERE customer_id = users.id) as totalPoints',
         ),
@@ -162,6 +190,131 @@ router.get('/ledger', async (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
+router.post(
+  '/claims/:id/reverse',
+  authorizeAdmin('manager', 'master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const claimId = uuidSchema.parse(req.params.id);
+      const { reason } = reverseClaimSchema.parse(req.body);
+      const result = await ReviewService.reverseClaim(claimId, req.user!.id, reason, req.requestId);
+      res.json({ message: 'Claim reversed', ...result });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  '/adjustments',
+  authorizeAdmin('manager', 'master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const input = adjustmentSchema.parse(req.body);
+      const entryId = await PointsEngineService.applyManualAdjustment(
+        input.customerId,
+        input.points,
+        input.reason,
+        req.user!.id,
+        req.requestId,
+        input.idempotencyKey,
+      );
+      res.status(201).json({ message: 'Adjustment applied', entryId });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get('/article-categories', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const categories = await ArticleCategoryService.list();
+    res.json({ categories });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post(
+  '/article-categories',
+  authorizeAdmin('master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const input = articleCategorySchema.parse(req.body);
+      const category = await ArticleCategoryService.create(input, req.user!.id, req.requestId);
+      res.status(201).json({ message: 'Article category created', category });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.patch(
+  '/article-categories/:id',
+  authorizeAdmin('master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = uuidSchema.parse(req.params.id);
+      const input = updateArticleCategorySchema.parse(req.body);
+      const category = await ArticleCategoryService.update(id, input, req.requestId);
+      res.json({ message: 'Article category updated', category });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  '/article-categories/:id',
+  authorizeAdmin('master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = uuidSchema.parse(req.params.id);
+      await ArticleCategoryService.remove(id, req.requestId);
+      res.json({ message: 'Article category deleted' });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.patch(
+  '/customers/:id/tier',
+  authorizeAdmin('manager', 'master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const customerId = uuidSchema.parse(req.params.id);
+      const { tier } = tierSchema.parse(req.body);
+      await ArticleCategoryService.setCustomerTier(customerId, tier, req.user!.id, req.requestId);
+      res.json({ message: 'Customer tier updated' });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  '/customers/:id/reset-password',
+  authorizeAdmin('manager', 'master_admin'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { newPassword } = resetCustomerPasswordSchema.parse(req.body);
+      await AuthService.adminResetPassword(
+        uuidSchema.parse(req.params.id),
+        newPassword,
+        req.user!.id,
+        req.requestId,
+        { ip: req.ip, userAgent: req.get('user-agent') },
+      );
+      res.json({
+        message: 'Password reset. The customer has been signed out of every device.',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 router.post('/admins', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = createAdminSchema.parse(req.body);
@@ -183,7 +336,7 @@ router.get('/admins', authorizeAdmin('master_admin'), async (_req: Request, res:
 
 router.patch('/admins/:id/role', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const id = req.params.id as string;
+    const id = uuidSchema.parse(req.params.id);
     const { role } = updateRoleSchema.parse(req.body);
     await AdminService.updateAdminRole(id, role, req.requestId);
     res.json({ message: 'Admin role updated' });
@@ -194,7 +347,7 @@ router.patch('/admins/:id/role', authorizeAdmin('master_admin'), async (req: Req
 
 router.post('/admins/:id/suspend', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const id = req.params.id as string;
+    const id = uuidSchema.parse(req.params.id);
     await AdminService.suspendAdmin(id, req.requestId);
     res.json({ message: 'Admin suspended' });
   } catch (error) {
@@ -204,7 +357,7 @@ router.post('/admins/:id/suspend', authorizeAdmin('master_admin'), async (req: R
 
 router.post('/admins/:id/activate', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const id = req.params.id as string;
+    const id = uuidSchema.parse(req.params.id);
     await AdminService.activateAdmin(id, req.requestId);
     res.json({ message: 'Admin activated' });
   } catch (error) {

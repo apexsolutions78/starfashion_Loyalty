@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { RuleService } from '../services/RuleService';
 import { authenticate, authorizeAdmin } from '../middleware/auth';
+import { uuidSchema } from '../utils/validators';
 
 const router = Router();
 
@@ -40,7 +41,7 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
 
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const rule = await RuleService.getRuleById(req.params.id as string);
+    const rule = await RuleService.getRuleById(uuidSchema.parse(req.params.id));
     res.json({ rule });
   } catch (error) {
     next(error);
@@ -60,7 +61,7 @@ router.post('/', authorizeAdmin('master_admin'), async (req: Request, res: Respo
 router.patch('/:id', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const input = ruleSchema.partial().parse(req.body);
-    const rule = await RuleService.updateRule(req.params.id as string, input, req.requestId);
+    const rule = await RuleService.updateRule(uuidSchema.parse(req.params.id), input, req.requestId);
     res.json({ message: 'Rule updated', rule });
   } catch (error) {
     next(error);
@@ -69,7 +70,7 @@ router.patch('/:id', authorizeAdmin('master_admin'), async (req: Request, res: R
 
 router.post('/:id/activate', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await RuleService.activateRule(req.params.id as string, req.requestId);
+    await RuleService.activateRule(uuidSchema.parse(req.params.id), req.requestId);
     res.json({ message: 'Rule activated' });
   } catch (error) {
     next(error);
@@ -78,7 +79,7 @@ router.post('/:id/activate', authorizeAdmin('master_admin'), async (req: Request
 
 router.post('/:id/deactivate', authorizeAdmin('master_admin'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await RuleService.deactivateRule(req.params.id as string, req.requestId);
+    await RuleService.deactivateRule(uuidSchema.parse(req.params.id), req.requestId);
     res.json({ message: 'Rule deactivated' });
   } catch (error) {
     next(error);

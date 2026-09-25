@@ -42,4 +42,8 @@ router.get('/audit', (req: Request, res: Response) => {
   res.render('admin/audit', { title: 'Audit Logs', active: 'audit', layout: 'layout' });
 });
 
+router.get('/profile', (req: Request, res: Response) => {
+  res.render('admin/profile', { title: 'My Profile', active: 'profile', layout: 'layout' });
+});
+
 export default router;

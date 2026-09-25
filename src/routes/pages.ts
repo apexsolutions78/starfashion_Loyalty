@@ -59,4 +59,8 @@ router.get('/offers', authenticate, authorizeCustomer, (req: Request, res: Respo
   res.render('customer/offers', { title: 'Offers', active: 'offers', layout: 'layout' });
 });
 
+router.get('/profile', authenticate, authorizeCustomer, (req: Request, res: Response) => {
+  res.render('customer/profile', { title: 'My Profile', active: 'profile', layout: 'layout' });
+});
+
 export default router;

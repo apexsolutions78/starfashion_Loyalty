@@ -36,6 +36,7 @@ export function originCheck(req: Request, res: Response, next: NextFunction): vo
     if (!allowed) {
       res.status(403).json({
         error: { code: 'CSRF_ORIGIN', message: 'Cross-origin request blocked' },
+        requestId: req.requestId,
       });
       return;
     }

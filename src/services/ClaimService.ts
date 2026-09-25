@@ -1,5 +1,6 @@
 import { db } from '../config/database';
 import type { Knex } from 'knex';
+import fs from 'fs/promises';
 import { env } from '../config';
 import { createAppError } from '../middleware/errorHandler';
 import { createRequestLogger } from '../utils/logger';
@@ -23,7 +24,7 @@ interface Claim {
   purchaseDate: string;
   submittedAmount: number;
   submittedArticles: string[] | null;
-  receiptImagePath: string;
+  imageAvailable: boolean;
   status: string;
   approvedAmount: number | null;
   eligibleAmount: number | null;
@@ -104,8 +105,9 @@ export class ClaimService {
     // and SQLite would coerce inconsistently.
     const purchaseDateStr = input.purchaseDate.slice(0, 10);
 
-    const claim = await db('receipt_claims').insert({
-      id: newId(),
+    const claimId = newId();
+    await db('receipt_claims').insert({
+      id: claimId,
       customer_id: customerId,
       receipt_number: normalizedNumber,
       purchase_date: purchaseDateStr,
@@ -113,10 +115,13 @@ export class ClaimService {
       submitted_articles: input.submittedArticles ? JSON.stringify(input.submittedArticles) : null,
       receipt_image_path: input.receiptImagePath,
       status: 'PENDING_REVIEW',
-    }).returning('*');
+    });
+
+    // Re-select instead of `.returning('*')` — MySQL ignores RETURNING.
+    const created = await db('receipt_claims').where('id', claimId).first();
 
     log.info('Receipt claim created', {
-      claimId: claim[0].id,
+      claimId,
       customerId,
       receiptNumber: normalizedNumber,
     });
@@ -126,10 +131,10 @@ export class ClaimService {
       'claim_submitted',
       'Receipt Submitted',
       'Your receipt has been submitted for review. This normally takes 24-48 hours.',
-      { claimId: claim[0].id },
+      { claimId },
     );
 
-    return serializeClaim(claim[0] as Record<string, any>) as unknown as Claim;
+    return serializeClaim(created as Record<string, any>) as unknown as Claim;
   }
 
   static async getCustomerClaims(
@@ -174,6 +179,30 @@ export class ClaimService {
     return serializeClaim(claim as Record<string, any>) as unknown as Claim;
   }
 
+  /**
+   * Ownership-checked receipt image path for the claim owner.
+   * The path never leaves the server; the route streams the file.
+   */
+  static async getOwnedImagePath(claimId: string, customerId: string): Promise<string> {
+    const claim = await db('receipt_claims')
+      .where('id', claimId)
+      .where('customer_id', customerId)
+      .select('receipt_image_path')
+      .first();
+
+    if (!claim) {
+      throw createAppError('Claim not found', 404, 'CLAIM_NOT_FOUND');
+    }
+
+    try {
+      await fs.access(claim.receipt_image_path);
+    } catch {
+      throw createAppError('Image file not found', 404, 'IMAGE_NOT_FOUND');
+    }
+
+    return claim.receipt_image_path;
+  }
+
   static async resubmitClaim(
     claimId: string,
     customerId: string,
@@ -196,7 +225,7 @@ export class ClaimService {
       );
     }
 
-    const updated = await db('receipt_claims')
+    await db('receipt_claims')
       .where('id', claimId)
       .update({
         receipt_image_path: input.receiptImagePath,
@@ -204,12 +233,19 @@ export class ClaimService {
         submitted_articles: input.submittedArticles ? JSON.stringify(input.submittedArticles) : claim.submitted_articles,
         status: 'PENDING_REVIEW',
         updated_at: new Date(),
-      })
-      .returning('*');
+      });
+
+    const previousPath: string | null = claim.receipt_image_path || null;
+    if (previousPath && previousPath !== input.receiptImagePath) {
+      await fs.unlink(previousPath).catch(() => undefined);
+    }
 
     log.info('Claim resubmitted', { claimId, customerId });
 
-    return serializeClaim(updated[0] as Record<string, any>) as unknown as Claim;
+    // Re-select instead of `.returning('*')` — MySQL ignores RETURNING.
+    const updated = await db('receipt_claims').where('id', claimId).first();
+
+    return serializeClaim(updated as Record<string, any>) as unknown as Claim;
   }
 
   static async createNotification(

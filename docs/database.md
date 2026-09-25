@@ -55,6 +55,9 @@
 - created_by (UUID, FK → users)
 - reason (TEXT)
 - reversal_reference (UUID)
+- expires_at (TIMESTAMP, nullable - NULL means the credit never expires)
+- expired_at (TIMESTAMP, nullable - set once the expiry job has consumed the row)
+- expired_points (INTEGER, default 0 - how many of this row's points the expiry job removed)
 
 ### redemption_vouchers
 - id (UUID, PK)

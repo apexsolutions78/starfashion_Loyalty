@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { RedemptionService } from '../services/RedemptionService';
 import { authenticate, authorizeCustomer, authorizeAdmin } from '../middleware/auth';
+import { uuidSchema } from '../utils/validators';
 
 const router = Router();
 
@@ -74,7 +75,7 @@ router.post('/:id/use', authorizeAdmin('reviewer', 'manager', 'master_admin'), a
 
 router.post('/:id/cancel', authorizeCustomer, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const voucherId = req.params.id as string;
+    const voucherId = uuidSchema.parse(req.params.id);
     await RedemptionService.cancelVoucher(voucherId, req.user!.id, req.requestId);
     res.json({ message: 'Voucher cancelled and points restored' });
   } catch (error) {

@@ -5,6 +5,17 @@ import { createAppError } from '../middleware/errorHandler';
 import { Role } from '../middleware/auth';
 import { createRequestLogger } from '../utils/logger';
 import { MailService } from './MailService';
+import { SessionService } from './SessionService';
+
+/**
+ * Request facts worth keeping for audit rows and session handling.
+ * `sessionId` is what lets a self-service change spare the caller's own session.
+ */
+export interface AuthContext {
+  ip?: string;
+  userAgent?: string;
+  sessionId?: string;
+}
 
 interface RegisterInput {
   email: string;
@@ -146,6 +157,7 @@ export class AuthService {
     currentPassword: string,
     newPassword: string,
     requestId: string,
+    context?: AuthContext,
   ): Promise<void> {
     const log = createRequestLogger(requestId);
 
@@ -160,9 +172,25 @@ export class AuthService {
     }
 
     const newHash = await hashPassword(newPassword);
-    await UserModel.update(userId, { password_hash: newHash });
 
-    log.info('Password changed', { userId });
+    await db.transaction(async (trx) => {
+      await trx('users').where('id', userId).update({ password_hash: newHash });
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: userId,
+        action: 'PASSWORD_CHANGED',
+        entity_type: 'users',
+        entity_id: userId,
+        ip_address: context?.ip ?? null,
+        user_agent: context?.userAgent ? context.userAgent.slice(0, 500) : null,
+      });
+    });
+
+    // Other devices stay signed in on the old password, so sign them out.
+    // The caller's own session is kept so this page keeps working.
+    const signedOut = await SessionService.invalidateUserSessions(userId, context?.sessionId);
+
+    log.info('Password changed', { userId, sessionsSignedOut: signedOut });
   }
 
   static async forgotPassword(email: string, requestId: string): Promise<void> {
@@ -188,7 +216,12 @@ export class AuthService {
     log.info('Password reset email sent', { userId: user.id, mode: mail.mode });
   }
 
-  static async resetPassword(token: string, newPassword: string, requestId: string): Promise<void> {
+  static async resetPassword(
+    token: string,
+    newPassword: string,
+    requestId: string,
+    context?: AuthContext,
+  ): Promise<void> {
     const log = createRequestLogger(requestId);
 
     const tokenHash = hashToken(token);
@@ -207,9 +240,62 @@ export class AuthService {
     await db.transaction(async (trx) => {
       await trx('password_reset_tokens').where('id', resetToken.id).update({ used: true });
       await trx('users').where('id', resetToken.user_id).update({ password_hash: newHash });
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: resetToken.user_id,
+        action: 'PASSWORD_RESET',
+        entity_type: 'users',
+        entity_id: resetToken.user_id,
+        ip_address: context?.ip ?? null,
+        user_agent: context?.userAgent ? context.userAgent.slice(0, 500) : null,
+      });
     });
 
-    log.info('Password reset completed', { userId: resetToken.user_id });
+    // A reset means the old password was not available, so every session for
+    // that account is suspect: sign it out everywhere, including this one.
+    const signedOut = await SessionService.invalidateUserSessions(resetToken.user_id);
+
+    log.info('Password reset completed', { userId: resetToken.user_id, sessionsSignedOut: signedOut });
+  }
+
+  /**
+   * Manager-initiated reset for a customer. Skips current-password verification
+   * (the admin does not know it), forces the target out of every session, and
+   * is attributed to the admin in the audit log.
+   */
+  static async adminResetPassword(
+    targetUserId: string,
+    newPassword: string,
+    actorId: string,
+    requestId: string,
+    context?: AuthContext,
+  ): Promise<void> {
+    const log = createRequestLogger(requestId);
+
+    const target = await UserModel.findById(targetUserId);
+    if (!target) {
+      throw createAppError('Customer not found', 404, 'USER_NOT_FOUND');
+    }
+
+    const newHash = await hashPassword(newPassword);
+
+    await db.transaction(async (trx) => {
+      await trx('users').where('id', targetUserId).update({ password_hash: newHash });
+      await trx('audit_logs').insert({
+        id: newId(),
+        user_id: actorId,
+        action: 'PASSWORD_RESET_BY_ADMIN',
+        entity_type: 'users',
+        entity_id: targetUserId,
+        new_values: JSON.stringify({ targetEmail: target.email }),
+        ip_address: context?.ip ?? null,
+        user_agent: context?.userAgent ? context.userAgent.slice(0, 500) : null,
+      });
+    });
+
+    const signedOut = await SessionService.invalidateUserSessions(targetUserId);
+
+    log.info('Password reset by admin', { targetUserId, actorId, sessionsSignedOut: signedOut });
   }
 
   static async sendVerificationEmail(userId: string, email: string, requestId: string, fullName?: string): Promise<string> {

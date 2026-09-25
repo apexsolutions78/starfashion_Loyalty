@@ -31,8 +31,9 @@ export class RuleService {
     const lastRule = await db('loyalty_rules').orderBy('version', 'desc').first();
     const nextVersion = lastRule ? lastRule.version + 1 : 1;
 
-    const [rule] = await db('loyalty_rules').insert({
-      id: newId(),
+    const ruleId = newId();
+    await db('loyalty_rules').insert({
+      id: ruleId,
       version: nextVersion,
       name: input.name,
       rules_json: JSON.stringify(input.rules),
@@ -40,7 +41,10 @@ export class RuleService {
       effective_from: input.effectiveFrom,
       effective_to: input.effectiveTo || null,
       created_by: createdBy,
-    }).returning('*');
+    });
+
+    // Re-select instead of `.returning()` — MySQL ignores RETURNING.
+    const rule = await db('loyalty_rules').where('id', ruleId).first();
 
     log.info('Rule created', { ruleId: rule.id, version: nextVersion });
     return { ...rule, rules: JSON.parse(rule.rules_json) };

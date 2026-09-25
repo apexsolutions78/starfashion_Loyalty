@@ -62,6 +62,40 @@
           <input type="number" id="minPurchase" min="0" step="0.01" placeholder="Optional">
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="bonusMultiplier">Multiplier (2 = double points)</label>
+          <input type="number" id="bonusMultiplier" min="0" step="0.1" placeholder="e.g. 2">
+        </div>
+        <div class="form-group">
+          <label for="bonusPoints">Fixed Bonus Points</label>
+          <input type="number" id="bonusPoints" min="0" step="1" placeholder="e.g. 50">
+        </div>
+        <div class="form-group">
+          <label for="bonusPercentage">Bonus % of Base Points</label>
+          <input type="number" id="bonusPercentage" min="0" step="1" placeholder="e.g. 25">
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:0.75rem">Fill only the bonus field matching the offer type. Leave blank otherwise.</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="eligibleArticles">Eligible Article Numbers</label>
+          <input type="text" id="eligibleArticles" placeholder="Comma-separated, e.g. SF-3PC-001, SF-3PC-002">
+          <div class="hint">Blank = all articles qualify</div>
+        </div>
+        <div class="form-group">
+          <label for="eligibleTiers">Eligible Customer Tiers</label>
+          <input type="text" id="eligibleTiers" placeholder="Comma-separated, e.g. gold, platinum">
+          <div class="hint">Blank = all tiers qualify</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="eligibleCategories">Eligible Categories</label>
+        <select id="eligibleCategories" multiple size="4">
+          <option value="">Loading categories...</option>
+        </select>
+        <div class="hint">Hold Ctrl/Cmd to select several. None selected = all categories qualify</div>
+      </div>
       <div class="form-group">
         <label for="offerTerms">Terms</label>
         <textarea id="offerTerms" rows="2" maxlength="2000" placeholder="Optional terms and conditions"></textarea>
@@ -83,6 +117,36 @@
     <div class="card-header">All Offers</div>
     <div id="offersList"><div class="spinner"></div></div>
   </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Article Categories</span>
+      <button type="button" class="btn btn-sm btn-primary" id="showCategoryBtn">Add Category</button>
+    </div>
+    <div id="alertCategory"></div>
+    <form id="categoryForm" style="display:none;margin-bottom:1rem">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="categoryName">Category</label>
+          <input type="text" id="categoryName" required maxlength="100" placeholder="three-piece">
+        </div>
+        <div class="form-group">
+          <label for="categoryPrefix">Article Prefix</label>
+          <input type="text" id="categoryPrefix" required maxlength="100" placeholder="SF-3PC">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="categoryDescription">Description</label>
+        <input type="text" id="categoryDescription" maxlength="500" placeholder="Optional">
+      </div>
+      <input type="hidden" id="categoryId" value="">
+      <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+        <button type="button" class="btn btn-outline" id="cancelCategoryBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="categorySubmitBtn">Save Category</button>
+      </div>
+    </form>
+    <div id="categoriesList"><div class="spinner"></div></div>
+  </div>
 </div>
 <script>
 const offersList = document.getElementById('offersList');
@@ -99,6 +163,20 @@ function typeBadge(type) {
   return `<span class="badge badge-approved">${String(type || '').replace(/_/g, ' ').toUpperCase()}</span>`;
 }
 
+function eligibilitySummary(o) {
+  const c = o.conditions || {};
+  const bits = [];
+  if (Array.isArray(c.eligibleArticles) && c.eligibleArticles.length) bits.push(`articles: ${c.eligibleArticles.join(', ')}`);
+  if (Array.isArray(c.eligibleCategories) && c.eligibleCategories.length) bits.push(`categories: ${c.eligibleCategories.join(', ')}`);
+  if (Array.isArray(c.eligibleTiers) && c.eligibleTiers.length) bits.push(`tiers: ${c.eligibleTiers.join(', ')}`);
+  if (typeof c.minimumPurchaseAmount === 'number' && c.minimumPurchaseAmount > 0) bits.push(`min PKR ${c.minimumPurchaseAmount}`);
+  if (c.multiplier) bits.push(`${c.multiplier}x`);
+  if (c.bonusPoints) bits.push(`+${c.bonusPoints} pts`);
+  if (c.bonusPercentage) bits.push(`+${c.bonusPercentage}%`);
+  if (!bits.length) return '';
+  return `<br><small style="color:var(--text-muted)">${esc(bits.join(' | '))}</small>`;
+}
+
 async function loadOffers() {
   try {
     offersList.innerHTML = '<div class="spinner"></div>';
@@ -113,7 +191,7 @@ async function loadOffers() {
         <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Dates</th><th>Usage</th><th>Actions</th></tr></thead>
         <tbody>${offers.map(o => `
           <tr>
-            <td><strong>${esc(o.name)}</strong>${o.description ? `<br><small style="color:var(--text-muted)">${esc(o.description)}</small>` : ''}</td>
+            <td><strong>${esc(o.name)}</strong>${o.description ? `<br><small style="color:var(--text-muted)">${esc(o.description)}</small>` : ''}${eligibilitySummary(o)}</td>
             <td>${typeBadge(o.offerType)}</td>
             <td>${activeBadge(!!o.isActive)}</td>
             <td>${formatDate(o.startDate)}<br><small style="color:var(--text-muted)">to ${formatDate(o.endDate)}</small></td>
@@ -185,8 +263,31 @@ document.getElementById('createOfferForm').addEventListener('submit', async (e) 
     if (terms) payload.terms = terms;
     const globalMax = document.getElementById('globalMaxUses').value;
     if (globalMax) payload.globalMaxUses = Number(globalMax);
+
+    const conditions = {};
     const minPurchase = document.getElementById('minPurchase').value;
-    if (minPurchase) payload.conditions = { minimumPurchaseAmount: Number(minPurchase) };
+    if (minPurchase) conditions.minimumPurchaseAmount = Number(minPurchase);
+
+    const multiplier = document.getElementById('bonusMultiplier').value;
+    if (multiplier) conditions.multiplier = Number(multiplier);
+    const bonusPoints = document.getElementById('bonusPoints').value;
+    if (bonusPoints) conditions.bonusPoints = Number(bonusPoints);
+    const bonusPercentage = document.getElementById('bonusPercentage').value;
+    if (bonusPercentage) conditions.bonusPercentage = Number(bonusPercentage);
+
+    const articles = document.getElementById('eligibleArticles').value
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (articles.length) conditions.eligibleArticles = articles;
+
+    const tiers = document.getElementById('eligibleTiers').value
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (tiers.length) conditions.eligibleTiers = tiers;
+
+    const categories = Array.from(document.getElementById('eligibleCategories').selectedOptions)
+      .map(o => o.value).filter(Boolean);
+    if (categories.length) conditions.eligibleCategories = categories;
+
+    if (Object.keys(conditions).length) payload.conditions = conditions;
 
     await API.post('/api/offers', payload);
     showAlert('Offer created', 'success');
@@ -200,6 +301,122 @@ document.getElementById('createOfferForm').addEventListener('submit', async (e) 
   }
 });
 
+const categoriesList = document.getElementById('categoriesList');
+const categoryForm = document.getElementById('categoryForm');
+
+async function loadCategories() {
+  try {
+    const data = await API.get('/api/admin/article-categories');
+    const rows = data.categories || [];
+    const select = document.getElementById('eligibleCategories');
+
+    select.innerHTML = rows.length
+      ? rows.map(c => `<option value="${esc(c.category)}">${esc(c.category)} (${esc(c.articlePrefix)})</option>`).join('')
+      : '<option value="">No categories defined</option>';
+
+    if (!rows.length) {
+      categoriesList.innerHTML = emptyMsg('No article categories defined');
+      return;
+    }
+
+    categoriesList.innerHTML = `
+      <table class="table">
+        <thead><tr><th>Category</th><th>Article Prefix</th><th>Description</th><th>Actions</th></tr></thead>
+        <tbody>${rows.map(c => `
+          <tr>
+            <td><strong>${esc(c.category)}</strong></td>
+            <td><code>${esc(c.articlePrefix)}</code></td>
+            <td>${c.description ? esc(c.description) : '<span style="color:var(--text-muted)">—</span>'}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm btn-outline" data-action="edit-category" data-id="${esc(c.id)}"
+                data-category="${esc(c.category)}" data-prefix="${esc(c.articlePrefix)}"
+                data-description="${esc(c.description || '')}">Edit</button>
+              <button class="btn btn-sm btn-outline" data-action="delete-category" data-id="${esc(c.id)}">Delete</button>
+            </td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`;
+  } catch (err) {
+    categoriesList.innerHTML = emptyMsg('Failed to load categories');
+  }
+}
+
+document.getElementById('showCategoryBtn').addEventListener('click', () => {
+  categoryForm.reset();
+  document.getElementById('categoryId').value = '';
+  document.getElementById('categorySubmitBtn').textContent = 'Save Category';
+  categoryForm.style.display = 'block';
+  document.getElementById('categoryName').focus();
+});
+
+document.getElementById('cancelCategoryBtn').addEventListener('click', () => {
+  categoryForm.style.display = 'none';
+  categoryForm.reset();
+  document.getElementById('categoryId').value = '';
+});
+
+categoriesList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+
+  if (action === 'edit-category') {
+    categoryForm.style.display = 'block';
+    document.getElementById('categoryId').value = id;
+    document.getElementById('categoryName').value = btn.dataset.category;
+    document.getElementById('categoryPrefix').value = btn.dataset.prefix;
+    document.getElementById('categoryDescription').value = btn.dataset.description;
+    document.getElementById('categorySubmitBtn').textContent = 'Update Category';
+    return;
+  }
+
+  if (action === 'delete-category') {
+    if (!confirm('Delete this article category? Existing offers keep their saved conditions.')) return;
+    btn.disabled = true;
+    try {
+      await API.delete(`/api/admin/article-categories/${id}`);
+      showAlert('Category deleted', 'success');
+      await loadCategories();
+    } catch (err) {
+      showAlert(err.error?.message || 'Delete failed', 'danger');
+      btn.disabled = false;
+    }
+  }
+});
+
+categoryForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('categorySubmitBtn');
+  const id = document.getElementById('categoryId').value;
+  const payload = {
+    category: document.getElementById('categoryName').value.trim(),
+    articlePrefix: document.getElementById('categoryPrefix').value.trim(),
+  };
+  const description = document.getElementById('categoryDescription').value.trim();
+  if (description) payload.description = description;
+
+  btn.disabled = true;
+  try {
+    if (id) {
+      await API.patch(`/api/admin/article-categories/${id}`, payload);
+      showAlert('Category updated', 'success');
+    } else {
+      await API.post('/api/admin/article-categories', payload);
+      showAlert('Category created', 'success');
+    }
+    categoryForm.style.display = 'none';
+    categoryForm.reset();
+    document.getElementById('categoryId').value = '';
+    await loadCategories();
+  } catch (err) {
+    showAlert(err.error?.message || 'Save failed', 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Category';
+  }
+});
+
+loadCategories();
 loadOffers();
 </script>
 <%- include('../partials/footer') %>
